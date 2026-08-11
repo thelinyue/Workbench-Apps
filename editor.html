@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>日志分析规则编辑器</title>
+  <style>
+    :root{color-scheme:light;--bg:#f3f6fb;--panel:#fff;--line:#dce3ed;--ink:#182230;--muted:#667085;--brand:#1769e0;--brand2:#0f55bd;--danger:#b42318;--warn:#b54708;--ok:#067647;--shadow:0 8px 28px rgba(16,24,40,.08)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI","Microsoft YaHei",sans-serif}.shell{min-height:100vh;display:grid;grid-template-rows:auto 1fr}
+    header{display:flex;align-items:center;gap:18px;padding:18px 24px;background:#14213d;color:#fff;box-shadow:var(--shadow)}header h1{font-size:20px;margin:0}header p{margin:2px 0 0;color:#c9d5e9}.spacer{flex:1}.toolbar{display:flex;align-items:end;gap:8px;flex-wrap:wrap}.version-field{font-size:12px;color:#c9d5e9}.version-field input{display:block;width:120px;margin-top:3px;padding:7px 9px}
+    button,.button{border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);padding:8px 12px;font:inherit;font-weight:600;cursor:pointer}button:hover,.button:hover{border-color:#98a2b3;background:#f8fafc}button.primary{background:var(--brand);border-color:var(--brand);color:#fff}button.primary:hover{background:var(--brand2)}button.danger{color:var(--danger)}button:disabled{opacity:.45;cursor:not-allowed}.button input{display:none}
+    main{display:grid;grid-template-columns:minmax(270px,320px) 1fr;gap:16px;padding:16px;min-height:0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);min-height:0}.sidebar{display:grid;grid-template-rows:auto auto 1fr}.panel-title{display:flex;align-items:center;gap:8px;padding:15px 16px;border-bottom:1px solid var(--line)}.panel-title h2{font-size:16px;margin:0}.count{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+    .search{padding:12px 16px;border-bottom:1px solid var(--line)}input,select,textarea{width:100%;border:1px solid #cfd8e6;border-radius:7px;background:#fff;color:var(--ink);padding:8px 10px;font:inherit}input:focus,select:focus,textarea:focus{outline:2px solid rgba(23,105,224,.18);border-color:var(--brand)}textarea{min-height:78px;resize:vertical}.file-list{padding:8px;overflow:auto}.file-item{width:100%;display:block;text-align:left;border:0;padding:11px 12px;margin:0 0 4px;border-radius:8px;font-weight:400}.file-item.active{background:#eaf2ff;color:#0f55bd}.file-item strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-item small{color:var(--muted)}
+    .workspace{display:grid;grid-template-rows:auto auto 1fr}.empty{display:grid;place-items:center;text-align:center;padding:50px;color:var(--muted)}.editor-head{padding:16px;border-bottom:1px solid var(--line)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field label{display:block;font-weight:600;margin:0 0 5px}.hint{font-size:12px;color:var(--muted);margin-top:4px}.rule-tools{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line)}.rule-tools input{max-width:340px}.rule-list{padding:12px 16px 20px;overflow:auto}.rule-card{border:1px solid var(--line);border-radius:10px;padding:13px;margin-bottom:10px;background:#fff}.rule-card.selected{border-color:#6aa2ef;box-shadow:0 0 0 2px rgba(23,105,224,.1)}.rule-summary{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1.4fr) auto;gap:12px;align-items:start}.term{font-family:Consolas,monospace;font-weight:700;overflow-wrap:anywhere}.result{color:#475467}.badges{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}.badge{font-size:12px;border-radius:999px;padding:2px 7px;background:#eef2f6;color:#475467}.badge.critical{background:#fee4e2;color:#b42318}.badge.warning{background:#fef0c7;color:#b54708}.badge.info{background:#e0f2fe;color:#026aa2}.rule-actions{display:flex;gap:6px;margin-top:10px}.rule-actions button{padding:5px 9px;font-size:12px}
+    .notice{position:fixed;right:18px;bottom:18px;max-width:440px;padding:12px 15px;border-radius:9px;background:#182230;color:#fff;box-shadow:var(--shadow);z-index:5}.notice.error{background:#7a271a}.validation{position:fixed;inset:0;background:rgba(16,24,40,.45);display:grid;place-items:center;padding:22px;z-index:10}.dialog{width:min(720px,100%);max-height:80vh;overflow:auto;background:#fff;border-radius:13px;box-shadow:0 25px 70px rgba(0,0,0,.25)}.dialog-head{position:sticky;top:0;display:flex;align-items:center;padding:15px 18px;border-bottom:1px solid var(--line);background:#fff}.dialog-head h2{font-size:17px;margin:0}.dialog-body{padding:16px 18px}.message{padding:9px 11px;margin-bottom:8px;border-left:4px solid var(--warn);background:#fff7ed}.message.error{border-color:var(--danger);background:#fff1f0}.success{padding:18px;border-radius:9px;background:#ecfdf3;color:var(--ok)}.hidden{display:none!important}
+    footer{padding:0 16px 14px;color:var(--muted);font-size:12px}@media(max-width:850px){main{grid-template-columns:1fr}.sidebar{max-height:340px}.rule-summary{grid-template-columns:1fr}.badges{justify-content:flex-start}.grid{grid-template-columns:1fr}header{align-items:flex-start;flex-wrap:wrap}.spacer{display:none}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div><h1>日志分析规则编辑器</h1><p>离线编辑、即时检查，确认后导出 JSON</p></div>
+    <div class="spacer"></div>
+    <div class="toolbar">
+      <label class="version-field">规则版本<input id="configVersion" placeholder="例如 2026.08.11"></label>
+      <label class="button">导入 JSON<input id="importFile" type="file" accept=".json,application/json"></label>
+      <button id="newSet">新建规则集</button>
+      <button id="validate">检查规则</button>
+      <button id="export" class="primary">导出规则</button>
+    </div>
+  </header>
+  <main>
+    <section class="panel sidebar">
+      <div class="panel-title"><h2>文件匹配项</h2><span class="count" id="fileCount">0 项</span><button id="addFile">＋ 添加</button></div>
+      <div class="search"><input id="fileSearch" placeholder="搜索文件名或分类"></div>
+      <div class="file-list" id="fileList"></div>
+    </section>
+    <section class="panel workspace">
+      <div class="empty" id="emptyState"><div><h2>先添加文件匹配项</h2><p>每个文件匹配项包含一个文件名前缀和若干关键词规则。</p></div></div>
+      <div id="editor" class="hidden">
+        <div class="editor-head">
+          <div class="grid">
+            <div class="field"><label for="fileName">文件名前缀</label><input id="fileName" placeholder="例如 syslog"><div class="hint">分析器使用文件名前缀匹配日志文件。</div></div>
+            <div class="field"><label for="category">分类</label><input id="category" placeholder="例如 系统日志"></div>
+          </div>
+          <div class="rule-actions"><button id="moveFileUp">上移</button><button id="moveFileDown">下移</button><button id="copyFile">复制</button><button id="deleteFile" class="danger">删除文件项</button></div>
+        </div>
+        <div class="rule-tools"><input id="ruleSearch" placeholder="搜索关键词或问题描述"><span class="count" id="ruleCount"></span><div class="spacer"></div><button id="addRule" class="primary">＋ 添加规则</button></div>
+        <div class="rule-list" id="ruleList"></div>
+      </div>
+    </section>
+  </main>
+  <footer>所有编辑仅保存在当前页面内；插件不会联网或覆盖原文件。请使用“导出规则”保存结果。</footer>
+</div>
+
+<div id="ruleDialog" class="validation hidden" role="dialog" aria-modal="true">
+  <div class="dialog">
+    <div class="dialog-head"><h2 id="ruleDialogTitle">编辑规则</h2><div class="spacer"></div><button id="closeRule">关闭</button></div>
+    <div class="dialog-body">
+      <div class="field"><label for="term">关键词 / 正则表达式</label><textarea id="term"></textarea></div>
+      <div class="field"><label for="result">问题描述</label><textarea id="result"></textarea></div>
+      <div class="grid">
+        <div class="field"><label for="isRegex">匹配方式</label><select id="isRegex"><option value="false">普通文本</option><option value="true">正则表达式</option></select></div>
+        <div class="field"><label for="severity">严重程度</label><select id="severity"><option value="">自动判断</option><option value="info">信息</option><option value="warning">警告</option><option value="critical">严重</option></select></div>
+        <div class="field"><label for="contextLines">上下文行数</label><input id="contextLines" type="number" min="0" step="1"></div>
+        <div class="field"><label for="contextDirection">上下文方向</label><select id="contextDirection"><option value="down">向下</option><option value="up">向上</option></select></div>
+        <div class="field"><label for="searchDirection">搜索方向</label><select id="searchDirection"><option value="down">从前向后</option><option value="up">从后向前</option></select></div>
+      </div>
+      <div class="rule-actions"><button id="saveRule" class="primary">保存规则</button><button id="testRegex">测试正则语法</button></div>
+    </div>
+  </div>
+</div>
+
+<div id="validationDialog" class="validation hidden" role="dialog" aria-modal="true">
+  <div class="dialog">
+    <div class="dialog-head"><h2>规则检查结果</h2><div class="spacer"></div><button id="closeValidation">关闭</button></div>
+    <div class="dialog-body" id="validationBody"></div>
+  </div>
+</div>
+<div id="notice" class="notice hidden"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const starter = () => ({version:new Date().toISOString().slice(0,10).replaceAll('-','.'),files:[]});
+  let data = starter(), selectedFile = -1, editingRule = -1;
+  const els = Object.fromEntries(['configVersion','fileList','fileCount','fileSearch','emptyState','editor','fileName','category','ruleList','ruleCount','ruleSearch','ruleDialog','ruleDialogTitle','term','result','isRegex','severity','contextLines','contextDirection','searchDirection','validationDialog','validationBody','notice'].map(id=>[id,$(id)]));
+
+  function normalizeRule(rule={}) { return {term:String(rule.term??''),result:String(rule.result??''),regex:Boolean(rule.regex),...(rule.severity?{severity:String(rule.severity)}:{}),context_lines:Number.isInteger(rule.context_lines)?rule.context_lines:0,context_direction:rule.context_direction||'down',search_direction:rule.search_direction||'down'}; }
+  function normalize(input) { return { ...(typeof input.version==='string'&&input.version.trim()?{version:input.version.trim()}:{}), files:Array.isArray(input.files)?input.files.map(file=>({name:String(file?.name??''),category:String(file?.category??''),keywords:Array.isArray(file?.keywords)?file.keywords.map(normalizeRule):[]})):[] }; }
+  function currentFile(){return selectedFile>=0&&selectedFile<data.files.length?data.files[selectedFile]:null;}
+  function notify(message,error=false){els.notice.textContent=message;els.notice.className='notice'+(error?' error':'');clearTimeout(notify.timer);notify.timer=setTimeout(()=>els.notice.className='notice hidden',3200);}
+  function esc(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function refresh(){els.configVersion.value=data.version||'';renderFiles();renderEditor();}
+  function renderFiles(){
+    const query=els.fileSearch.value.trim().toLowerCase();els.fileList.innerHTML='';
+    data.files.forEach((file,index)=>{if(query&&!`${file.name} ${file.category}`.toLowerCase().includes(query))return;const b=document.createElement('button');b.className='file-item'+(index===selectedFile?' active':'');b.innerHTML=`<strong>${esc(file.name||'未命名文件')}</strong><small>${esc(file.category||'未分类')} · ${file.keywords.length} 条规则</small>`;b.onclick=()=>{selectedFile=index;refresh();};els.fileList.appendChild(b);});
+    els.fileCount.textContent=`${data.files.length} 项`;
+  }
+  function renderEditor(){
+    const file=currentFile();els.emptyState.classList.toggle('hidden',!!file);els.editor.classList.toggle('hidden',!file);if(!file)return;
+    els.fileName.value=file.name;els.category.value=file.category;renderRules();
+    $('moveFileUp').disabled=selectedFile===0;$('moveFileDown').disabled=selectedFile===data.files.length-1;
+  }
+  function renderRules(){
+    const file=currentFile(),query=els.ruleSearch.value.trim().toLowerCase();els.ruleList.innerHTML='';
+    file.keywords.forEach((rule,index)=>{if(query&&!`${rule.term} ${rule.result}`.toLowerCase().includes(query))return;const card=document.createElement('div');card.className='rule-card';const severity=rule.severity||'auto';card.innerHTML=`<div class="rule-summary"><div class="term">${esc(rule.term||'空关键词')}</div><div class="result">${esc(rule.result||'无问题描述')}</div><div class="badges"><span class="badge ${esc(rule.severity||'')}">${rule.regex?'正则':'文本'}</span><span class="badge ${esc(rule.severity||'')}">${esc(severity)}</span><span class="badge">上下文 ${rule.context_lines}</span></div></div><div class="rule-actions"><button data-action="edit">编辑</button><button data-action="copy">复制</button><button data-action="up">上移</button><button data-action="down">下移</button><button data-action="delete" class="danger">删除</button></div>`;
+      card.querySelector('[data-action=edit]').onclick=()=>openRule(index);card.querySelector('[data-action=copy]').onclick=()=>{file.keywords.splice(index+1,0,normalizeRule(rule));renderRules();};card.querySelector('[data-action=up]').onclick=()=>moveRule(index,-1);card.querySelector('[data-action=down]').onclick=()=>moveRule(index,1);card.querySelector('[data-action=delete]').onclick=()=>{if(confirm(`确定删除规则“${rule.term}”吗？`)){file.keywords.splice(index,1);renderRules();}};els.ruleList.appendChild(card);
+    });
+    els.ruleCount.textContent=`${file.keywords.length} 条`;
+  }
+  function moveRule(index,delta){const file=currentFile(),next=index+delta;if(next<0||next>=file.keywords.length)return;[file.keywords[index],file.keywords[next]]=[file.keywords[next],file.keywords[index]];renderRules();}
+  function openRule(index){editingRule=index;const rule=index<0?normalizeRule():currentFile().keywords[index];els.ruleDialogTitle.textContent=index<0?'添加规则':'编辑规则';els.term.value=rule.term;els.result.value=rule.result;els.isRegex.value=String(rule.regex);els.severity.value=rule.severity||'';els.contextLines.value=rule.context_lines;els.contextDirection.value=rule.context_direction;els.searchDirection.value=rule.search_direction;els.ruleDialog.classList.remove('hidden');els.term.focus();}
+  function closeRule(){els.ruleDialog.classList.add('hidden');}
+  function readRuleForm(){return normalizeRule({term:els.term.value.trim(),result:els.result.value.trim(),regex:els.isRegex.value==='true',severity:els.severity.value,context_lines:Number(els.contextLines.value),context_direction:els.contextDirection.value,search_direction:els.searchDirection.value});}
+  function regexError(rule){if(!rule.regex)return'';try{new RegExp(rule.term);return'';}catch(error){return error.message;}}
+  function validate(){
+    const messages=[],fileNames=new Map();if(!Array.isArray(data.files))messages.push({type:'error',text:'files 必须是数组。'});
+    data.files.forEach((file,fi)=>{const at=`文件项 ${fi+1}`;if(!file.name.trim())messages.push({type:'error',text:`${at}：文件名前缀不能为空。`});if(!file.category.trim())messages.push({type:'warning',text:`${at}：建议填写分类。`});const key=file.name.trim().toLowerCase();if(key&&fileNames.has(key))messages.push({type:'warning',text:`${at}：文件名前缀与第 ${fileNames.get(key)} 项重复。`});else if(key)fileNames.set(key,fi+1);const seen=new Map();file.keywords.forEach((rule,ri)=>{const place=`${at} / 规则 ${ri+1}`;if(!rule.term.trim())messages.push({type:'error',text:`${place}：关键词不能为空。`});if(!rule.result.trim())messages.push({type:'warning',text:`${place}：问题描述为空。`});if(!Number.isInteger(rule.context_lines)||rule.context_lines<0)messages.push({type:'error',text:`${place}：上下文行数必须是非负整数。`});if(!['up','down'].includes(rule.context_direction))messages.push({type:'error',text:`${place}：上下文方向只能是 up 或 down。`});if(!['up','down'].includes(rule.search_direction))messages.push({type:'error',text:`${place}：搜索方向只能是 up 或 down。`});if(rule.severity&&!['info','warning','critical'].includes(rule.severity))messages.push({type:'error',text:`${place}：严重程度无效。`});const reError=regexError(rule);if(reError)messages.push({type:'error',text:`${place}：正则表达式无效（${reError}）。`});if(!rule.regex&&(/\.\*|\.\+/.test(rule.term)))messages.push({type:'warning',text:`${place}：关键词含常见正则写法，但匹配方式是普通文本。`});const ruleKey=`${rule.term}\0${rule.regex}\0${rule.result}`;if(seen.has(ruleKey))messages.push({type:'warning',text:`${place}：与规则 ${seen.get(ruleKey)} 重复，分析器会跳过重复项。`});else seen.set(ruleKey,ri+1);});});return messages;
+  }
+  function showValidation(messages=validate()){
+    els.validationBody.innerHTML='';if(!messages.length){els.validationBody.innerHTML='<div class="success"><strong>检查通过</strong><br>没有发现格式错误或重复规则警告。</div>';}else messages.forEach(item=>{const div=document.createElement('div');div.className='message '+item.type;div.textContent=(item.type==='error'?'错误：':'警告：')+item.text;els.validationBody.appendChild(div);});els.validationDialog.classList.remove('hidden');return !messages.some(x=>x.type==='error');
+  }
+  function exportRules(){const messages=validate();if(messages.some(x=>x.type==='error')){showValidation(messages);notify('存在格式错误，修正后才能导出。',true);return;}const blob=new Blob([JSON.stringify(data,null,2)+'\n'],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`rules-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),0);notify(messages.length?'规则已导出，请留意检查中的警告。':'规则已导出。');}
+
+  $('importFile').onchange=async event=>{const file=event.target.files[0];if(!file)return;try{const parsed=JSON.parse(await file.text());if(!parsed||!Array.isArray(parsed.files))throw new Error('根对象必须包含 files 数组');data=normalize(parsed);selectedFile=data.files.length?0:-1;refresh();const messages=validate();notify(`已导入 ${data.files.length} 个文件项、${data.files.reduce((n,f)=>n+f.keywords.length,0)} 条规则。`);if(messages.some(x=>x.type==='error'))showValidation(messages);}catch(error){notify('导入失败：'+error.message,true);}finally{event.target.value='';}};
+  $('newSet').onclick=()=>{if((data.files.length===0)||confirm('新建会清空当前页面内尚未导出的编辑，是否继续？')){data=starter();selectedFile=-1;refresh();}};
+  $('addFile').onclick=()=>{data.files.push({name:'',category:'',keywords:[]});selectedFile=data.files.length-1;refresh();els.fileName.focus();};
+  els.fileSearch.oninput=renderFiles;els.ruleSearch.oninput=renderRules;
+  els.configVersion.oninput=()=>{const version=els.configVersion.value.trim();if(version)data.version=version;else delete data.version;};
+  els.fileName.oninput=()=>{currentFile().name=els.fileName.value;renderFiles();};els.category.oninput=()=>{currentFile().category=els.category.value;renderFiles();};
+  $('moveFileUp').onclick=()=>{if(selectedFile>0){[data.files[selectedFile-1],data.files[selectedFile]]=[data.files[selectedFile],data.files[selectedFile-1]];selectedFile--;refresh();}};
+  $('moveFileDown').onclick=()=>{if(selectedFile<data.files.length-1){[data.files[selectedFile+1],data.files[selectedFile]]=[data.files[selectedFile],data.files[selectedFile+1]];selectedFile++;refresh();}};
+  $('copyFile').onclick=()=>{const copy=JSON.parse(JSON.stringify(currentFile()));copy.name=copy.name+'-copy';data.files.splice(selectedFile+1,0,copy);selectedFile++;refresh();};
+  $('deleteFile').onclick=()=>{const file=currentFile();if(confirm(`确定删除文件项“${file.name||'未命名文件'}”及其全部规则吗？`)){data.files.splice(selectedFile,1);selectedFile=Math.min(selectedFile,data.files.length-1);refresh();}};
+  $('addRule').onclick=()=>openRule(-1);$('closeRule').onclick=closeRule;
+  $('saveRule').onclick=()=>{const rule=readRuleForm();if(!rule.term){notify('关键词不能为空。',true);return;}const error=regexError(rule);if(error){notify('正则表达式无效：'+error,true);return;}if(editingRule<0)currentFile().keywords.push(rule);else currentFile().keywords[editingRule]=rule;closeRule();renderRules();};
+  $('testRegex').onclick=()=>{const rule=readRuleForm();if(!rule.regex){notify('当前匹配方式是普通文本，无需正则校验。');return;}const error=regexError(rule);notify(error?'正则表达式无效：'+error:'正则表达式语法正确。',!!error);};
+  $('validate').onclick=()=>showValidation();$('closeValidation').onclick=()=>els.validationDialog.classList.add('hidden');$('export').onclick=exportRules;
+  [els.ruleDialog,els.validationDialog].forEach(dialog=>dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.classList.add('hidden');}));
+  refresh();
+})();
+</script>
+</body>
+</html>

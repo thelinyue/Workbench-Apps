@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+      - name: Check formatting
+        shell: pwsh
+        run: |
+          $unformatted = gofmt -l .
+          if ($unformatted) {
+            Write-Error "以下 Go 文件尚未格式化：$($unformatted -join ', ')"
+          }
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build Windows EXE
+        run: go build -trimpath -o rule_editor.exe .
