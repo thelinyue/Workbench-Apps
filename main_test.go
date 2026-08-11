@@ -183,6 +183,82 @@ func TestDashboardTemplateEscapesLogContent(t *testing.T) {
 	}
 }
 
+func TestDiagnosticTargetPointsToSmartDisk(t *testing.T) {
+	sysInfo := &SysInfoSummary{Disks: []DiskSummary{
+		{Name: "sda", Smart: []SmartAttribute{{ID: 197, Status: "风险"}}},
+		{Name: "sdb", Smart: []SmartAttribute{{ID: 197, Status: "风险"}}},
+	}}
+	if got := diagnosticTarget(nil, sysInfo); got != "diagnosticDisk-0" {
+		t.Fatalf("SMART 详情目标错误: %s", got)
+	}
+}
+
+func TestDiagnosticTargetPointsToDiskIssue(t *testing.T) {
+	results := []Result{{GroupedIssues: []GroupedIssue{
+		{Keyword: "unrelated", Severity: SeverityWarning},
+		{Keyword: "SATA", Message: "disk connection fault", Severity: SeverityCritical},
+	}}}
+	if got := diagnosticTarget(results, nil); got != "diagnosticIssue-0-1" {
+		t.Fatalf("磁盘日志详情目标错误: %s", got)
+	}
+}
+
+func TestDiagnosticTargetPointsToFilesystemIssue(t *testing.T) {
+	results := []Result{{GroupedIssues: []GroupedIssue{{Keyword: "ext4-fs", Severity: SeverityCritical}}}}
+	if got := diagnosticTarget(results, nil); got != "diagnosticIssue-0-0" {
+		t.Fatalf("文件系统详情目标错误: %s", got)
+	}
+}
+
+func TestDiagnosticTargetPrefersSmartOverLogIssues(t *testing.T) {
+	sysInfo := &SysInfoSummary{Disks: []DiskSummary{{Smart: []SmartAttribute{{ID: 5, Status: "风险"}}}}}
+	results := []Result{{GroupedIssues: []GroupedIssue{{Keyword: "ext4-fs", Severity: SeverityCritical}}}}
+	if got := diagnosticTarget(results, sysInfo); got != "diagnosticDisk-0" {
+		t.Fatalf("详情目标优先级错误: %s", got)
+	}
+}
+
+func TestDiagnosticTargetIsEmptyWithoutEvidence(t *testing.T) {
+	if got := diagnosticTarget([]Result{{GroupedIssues: []GroupedIssue{{Keyword: "notice", Severity: SeverityInfo}}}}, nil); got != "" {
+		t.Fatalf("无可定位证据时目标应为空: %s", got)
+	}
+}
+
+func TestDashboardTemplateRendersDiagnosticTargets(t *testing.T) {
+	data := ReportData{
+		DiagnosticSummary: "检测到磁盘风险",
+		DiagnosticTarget:  "diagnosticIssue-0-0",
+		Results: []Result{{File: "system.log", GroupedIssues: []GroupedIssue{{Keyword: "SATA", Message: "disk fault", Severity: SeverityCritical}}}},
+	}
+	tmpl, err := template.New("report").Funcs(template.FuncMap{"split": strings.Split, "smartFocus": focusSmartAttributes, "smartRiskReminder": smartRiskReminder, "smartHasRisk": smartHasRisk}).Parse(dashboardReportTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := tmpl.Execute(&output, data); err != nil {
+		t.Fatal(err)
+	}
+	html := output.String()
+	if !strings.Contains(html, `data-detail-target="diagnosticIssue-0-0"`) || !strings.Contains(html, `id="diagnosticIssue-0-0"`) {
+		t.Fatalf("诊断目标未正确渲染: %s", html)
+	}
+}
+
+func TestDashboardTemplateHidesDiagnosticButtonWithoutTarget(t *testing.T) {
+	data := ReportData{DiagnosticSummary: "未发现明确故障"}
+	tmpl, err := template.New("report").Funcs(template.FuncMap{"split": strings.Split, "smartFocus": focusSmartAttributes, "smartRiskReminder": smartRiskReminder, "smartHasRisk": smartHasRisk}).Parse(dashboardReportTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := tmpl.Execute(&output, data); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), `data-detail-target=`) {
+		t.Fatal("无诊断目标时不应渲染详情按钮")
+	}
+}
+
 func TestExtractBuildVersionsKeepsLatestTimestamp(t *testing.T) {
 	result := Result{File: "/logs/app_serv.log", Category: "应用中心", GroupedIssues: []GroupedIssue{{Keyword: "Build version", Message: "构建版本", Issues: []Issue{
 		{Line: 1, ContextLines: []ContextLine{{Number: 1, Text: "2026-01-01 10:00:00 Build version 1.0.0", Hit: true}}},

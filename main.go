@@ -814,6 +814,10 @@ func generateReport(results []Result, cfg *Config, outputPath string, maxEntries
 	if strings.TrimSpace(ruleVersion) == "" {
 		ruleVersion = "内置规则 v1.0.0"
 	}
+	diagnosticTargetID := diagnosticTarget(limitedResults, sysInfo)
+	if diagnosticTargetID == "" && (hasDiskFault(results, sysInfo) || hasFilesystemFault(results)) {
+		log.Printf("快速诊断结论无法定位到具体证据，详情按钮将隐藏")
+	}
 	data := ReportData{
 		Title:             "系统日志诊断报告",
 		AnalysisTime:      startTime.Format("2006-01-02 15:04:05"),
@@ -822,7 +826,7 @@ func generateReport(results []Result, cfg *Config, outputPath string, maxEntries
 		SummaryItems:      buildSummaryItems(reportResults),
 		DiagnosticSummary: buildDiagnosticSummary(results, sysInfo),
 		DiagnosticClass:   diagnosticClass(results, sysInfo),
-		DiagnosticTarget:  diagnosticTarget(results, sysInfo),
+		DiagnosticTarget:  diagnosticTargetID,
 		BuildVersions:     extractBuildVersions(results),
 		Memory:            extractMemoryModules(results),
 		BlockDevices:      extractBlockDevices(results),
@@ -1022,14 +1026,65 @@ func diagnosticClass(results []Result, sysInfo *SysInfoSummary) string {
 	return "diagnostic-ok"
 }
 
+const (
+	diagnosticDiskTargetPrefix  = "diagnosticDisk-"
+	diagnosticIssueTargetPrefix = "diagnosticIssue-"
+)
+
+// diagnosticTarget 返回与报告模板中稳定 ID 对应的首个关键证据目标。
+// 目标顺序必须与快速诊断结论保持一致：SMART、磁盘日志、文件系统日志。
+// 这里使用最终渲染的 limitedResults，避免过滤或截断后出现悬空链接。
 func diagnosticTarget(results []Result, sysInfo *SysInfoSummary) string {
-	if hasDiskFault(results, sysInfo) && sysInfo != nil {
-		return "sysinfoAnchor"
+	if target := smartDiagnosticTarget(sysInfo); target != "" {
+		return target
 	}
-	if hasFilesystemFault(results) {
-		return "resultsList"
+	if target := issueDiagnosticTarget(results, func(text string) bool {
+		for _, token := range []string{"smart", "nvme", "sata", "i/o error", "sector", "硬盘", "磁盘"} {
+			if strings.Contains(text, token) {
+				return true
+			}
+		}
+		return false
+	}); target != "" {
+		return target
 	}
-	return "resultsList"
+	return issueDiagnosticTarget(results, func(text string) bool {
+		for _, token := range []string{"ext4-fs", "ext4文件系统", "btrfs error", "只读文件系统", "read-only file system", "文件系统错误"} {
+			if strings.Contains(text, token) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func smartDiagnosticTarget(sysInfo *SysInfoSummary) string {
+	if sysInfo == nil {
+		return ""
+	}
+	for diskIndex, disk := range sysInfo.Disks {
+		for _, smart := range disk.Smart {
+			if (smart.ID == 5 || smart.ID == 197 || smart.ID == 198) && smart.Status == "风险" {
+				return fmt.Sprintf("%s%d", diagnosticDiskTargetPrefix, diskIndex)
+			}
+		}
+	}
+	return ""
+}
+
+func issueDiagnosticTarget(results []Result, matches func(string) bool) string {
+	for resultIndex, result := range results {
+		for groupIndex, group := range result.GroupedIssues {
+			if group.Severity == SeverityInfo {
+				continue
+			}
+			text := strings.ToLower(group.Keyword + " " + group.Message)
+			if matches(text) {
+				return fmt.Sprintf("%s%d-%d", diagnosticIssueTargetPrefix, resultIndex, groupIndex)
+			}
+		}
+	}
+	return ""
 }
 
 func hasDiskFault(results []Result, sysInfo *SysInfoSummary) bool {
