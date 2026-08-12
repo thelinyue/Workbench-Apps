@@ -1,7 +1,0 @@
-{
-  "id": "log-rule-editor",
-  "name": "日志分析规则编辑器",
-  "version": "1.0.0",
-  "type": "Exe",
-  "entry": "rule_editor.exe"
-}

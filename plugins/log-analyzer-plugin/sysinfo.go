@@ -13,7 +13,9 @@ type SysInfoSummary struct {
 	Model        string
 	SerialNumber string
 	Firmware     string
+	Platform     string
 	System       []KeyValue
+	Networks     []NetworkInterfaceCard
 	Disks        []DiskSummary
 	RawJSON      string
 }
@@ -30,18 +32,25 @@ type MemoryModule struct {
 	Model        string
 }
 
+// DiskSummary 是 sysinfo.json 中一块磁盘的工程诊断摘要，字段缺失时保留为空。
 type DiskSummary struct {
-	Name     string
-	Label    string
-	UsedFor  string
-	Slot     string
-	Model    string
-	Serial   string
-	Capacity string
-	Health   string
-	Smart    []SmartAttribute
+	Name          string
+	DeviceName    string
+	Label         string
+	UsedFor       string
+	Slot          string
+	Model         string
+	Serial        string
+	Brand         string
+	InterfaceType string
+	Capacity      string
+	Temperature   string
+	PowerOnHours  string
+	Health        string
+	Smart         []SmartAttribute
 }
 
+// SmartAttribute 是一条 SMART 属性，同时保留原始值和适合诊断的状态。
 type SmartAttribute struct {
 	ID        int
 	Name      string
@@ -170,8 +179,10 @@ func parseSysInfo(content []byte) *SysInfoSummary {
 		Model:        firstString(root, "deviceName"),
 		SerialNumber: firstString(root, "sn", "serial", "serial_number", "serialNumber"),
 		Firmware:     firstString(root, "systemVersion"),
+		Platform:     firstString(root, "platform", "architecture", "arch"),
 		RawJSON:      string(raw),
 	}
+	summary.Networks = parseSysInfoNetworks(root)
 	if system := firstValue(root, "system", "system_info", "os"); system != nil {
 		summary.System = flattenKeyValues(system, "", 20)
 	}
@@ -191,10 +202,61 @@ func parseSysInfo(content []byte) *SysInfoSummary {
 	}
 	summary.Disks = deduplicateDisks(summary.Disks)
 
-	if summary.Model == "" && summary.SerialNumber == "" && summary.Firmware == "" && len(summary.System) == 0 && len(summary.Disks) == 0 {
+	if summary.Model == "" && summary.SerialNumber == "" && summary.Firmware == "" && summary.Platform == "" && len(summary.System) == 0 && len(summary.Networks) == 0 && len(summary.Disks) == 0 {
 		return nil
 	}
 	return summary
+}
+
+// parseSysInfoNetworks 将 sysinfo.json 中的 network.interface 转换为报告使用的统一网卡模型。
+// sysinfo 只提供快照状态，因此未连接接口显示为“未连接”，不直接升级为诊断风险。
+func parseSysInfoNetworks(root interface{}) []NetworkInterfaceCard {
+	network := firstValue(root, "network", "network_info")
+	if network == nil {
+		return nil
+	}
+	var interfaces []NetworkInterfaceCard
+	for _, value := range findValues(network, "interface", "interfaces") {
+		items, ok := value.([]interface{})
+		if !ok {
+			items = []interface{}{value}
+		}
+		for _, item := range items {
+			object, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			runningValue := firstValue(object, "is_running", "running", "up")
+			status := "未知"
+			state := "未知"
+			carrier := ""
+			if runningValue != nil {
+				status = "未连接"
+				state = "DOWN"
+				carrier = "NO-CARRIER"
+				if boolValue(runningValue) {
+					status = "正常"
+					state = "UP"
+					carrier = "CARRIER"
+				}
+			}
+			card := NetworkInterfaceCard{
+				Name:    firstString(object, "name"),
+				State:   state,
+				Carrier: carrier,
+				MAC:     firstString(object, "mac", "hardware_address"),
+				IPv4:    stringValues(firstValue(object, "ipv4")),
+				IPv6:    stringValues(firstValue(object, "ipv6")),
+				MTU:     firstString(object, "mtu"),
+				Status:  status,
+			}
+			if card.Name == "" {
+				card.Name = firstString(object, "interface")
+			}
+			interfaces = append(interfaces, card)
+		}
+	}
+	return interfaces
 }
 
 func diskSummariesFromDevices(value interface{}) []DiskSummary {
@@ -254,19 +316,24 @@ func diskSummary(value interface{}) *DiskSummary {
 		return nil
 	}
 	disk := &DiskSummary{
-		Name:     firstString(object, "name"),
-		Label:    firstString(object, "label"),
-		UsedFor:  firstString(object, "used_for"),
-		Slot:     firstString(object, "slot"),
-		Model:    firstString(object, "model"),
-		Serial:   firstString(object, "serial"),
-		Capacity: firstString(object, "capacity"),
-		Health:   firstString(object, "health", "status"),
+		Name:          firstString(object, "name"),
+		DeviceName:    firstString(object, "dev_name", "device_name", "device_path"),
+		Label:         firstString(object, "label"),
+		UsedFor:       firstString(object, "used_for", "usage"),
+		Slot:          firstString(object, "slot"),
+		Model:         firstString(object, "model"),
+		Serial:        firstString(object, "serial"),
+		Brand:         firstString(object, "brand", "manufacturer"),
+		InterfaceType: firstString(object, "interface_type", "interface"),
+		Capacity:      formatCapacity(firstValue(object, "size", "capacity")),
+		Temperature:   firstString(object, "temperature", "temp"),
+		PowerOnHours:  formatPowerOnHours(firstValue(object, "power_on_hours", "powerOnHours")),
+		Health:        normalizeDiskHealth(firstString(object, "health", "status")),
 	}
 	for _, value := range findValues(object, "smart", "smart_attributes", "attributes") {
 		disk.Smart = append(disk.Smart, smartAttributes(value)...)
 	}
-	if disk.Label == "" && disk.UsedFor == "" && disk.Slot == "" && disk.Model == "" && disk.Serial == "" && len(disk.Smart) == 0 {
+	if disk.Name == "" && disk.DeviceName == "" && disk.Label == "" && disk.UsedFor == "" && disk.Slot == "" && disk.Model == "" && disk.Serial == "" && len(disk.Smart) == 0 {
 		return nil
 	}
 	return disk
@@ -296,7 +363,11 @@ func smartAttribute(value interface{}) *SmartAttribute {
 	}
 	idValue := firstValue(object, "id", "ID", "attribute_id")
 	id, _ := strconv.Atoi(asString(idValue))
-	raw := firstString(object, "raw", "raw_value", "rawValue", "raw_val")
+	raw := firstString(object, "raw_string", "raw", "raw_value", "rawValue", "raw_val")
+	status := smartStatus(id, raw)
+	if id != 5 && id != 197 && id != 198 {
+		status = smartSourceStatus(firstValue(object, "status"), status)
+	}
 	attribute := &SmartAttribute{
 		ID:        id,
 		Name:      firstString(object, "name", "attribute", "label"),
@@ -304,7 +375,7 @@ func smartAttribute(value interface{}) *SmartAttribute {
 		Worst:     firstString(object, "worst"),
 		Threshold: firstString(object, "threshold", "thresh"),
 		Raw:       raw,
-		Status:    smartStatus(id, raw),
+		Status:    status,
 	}
 	if attribute.ID == 0 && attribute.Name == "" && attribute.Raw == "" {
 		return nil
@@ -324,6 +395,100 @@ func smartStatus(id int, raw string) string {
 		return "正常"
 	}
 	return "风险"
+}
+
+func smartSourceStatus(value interface{}, fallback string) string {
+	if value == nil {
+		return fallback
+	}
+	switch strings.ToLower(strings.TrimSpace(asString(value))) {
+	case "1", "ok", "normal", "正常":
+		return "正常"
+	case "0", "unknown", "未知":
+		return "未知"
+	case "risk", "warning", "failed", "风险", "警告":
+		return "风险"
+	default:
+		return fallback
+	}
+}
+
+func boolValue(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true") || strings.TrimSpace(typed) == "1"
+	default:
+		return asString(value) == "1"
+	}
+}
+
+func stringValues(value interface{}) []string {
+	var values []string
+	switch typed := value.(type) {
+	case []interface{}:
+		for _, item := range typed {
+			if text := strings.TrimSpace(asString(item)); text != "" {
+				values = append(values, text)
+			}
+		}
+	case string:
+		for _, item := range strings.FieldsFunc(typed, func(r rune) bool { return r == ',' || r == ';' || r == '\n' }) {
+			if text := strings.TrimSpace(item); text != "" {
+				values = append(values, text)
+			}
+		}
+	default:
+		if text := strings.TrimSpace(asString(value)); text != "" {
+			values = append(values, text)
+		}
+	}
+	return values
+}
+
+func formatCapacity(value interface{}) string {
+	raw := strings.TrimSpace(asString(value))
+	if raw == "" {
+		return ""
+	}
+	number, err := strconv.ParseFloat(raw, 64)
+	if err != nil || number <= 0 {
+		return raw
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
+	unitIndex := 0
+	for number >= 1024 && unitIndex < len(units)-1 {
+		number /= 1024
+		unitIndex++
+	}
+	if unitIndex == 0 {
+		return fmt.Sprintf("%.0f %s", number, units[unitIndex])
+	}
+	return fmt.Sprintf("%.2f %s", number, units[unitIndex])
+}
+
+func formatPowerOnHours(value interface{}) string {
+	raw := strings.TrimSpace(asString(value))
+	if raw == "" {
+		return ""
+	}
+	hours, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || hours < 0 {
+		return raw
+	}
+	return fmt.Sprintf("%d 天 %d 小时", hours/24, hours%24)
+}
+
+func normalizeDiskHealth(value string) string {
+	switch strings.TrimSpace(value) {
+	case "1":
+		return "正常"
+	case "0":
+		return "未知"
+	default:
+		return value
+	}
 }
 
 func firstString(value interface{}, keys ...string) string {

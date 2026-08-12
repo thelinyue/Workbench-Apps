@@ -809,6 +809,11 @@ func generateReport(results []Result, cfg *Config, outputPath string, maxEntries
 	if sysInfo != nil && sysInfo.Model == "" {
 		sysInfo.Model = extractDMIModel(results)
 	}
+	networks := extractNetworks(results)
+	if sysInfo != nil && len(sysInfo.Networks) > 0 {
+		// sysinfo.json 是设备快照，优先用于结构化展示；缺失时再回退到 ifconfig.log。
+		networks = sysInfo.Networks
+	}
 	blockDevicesPath := writeStructuredHTML(reportDir, "lsblk.html", extractBlockDevicesRaw(results))
 	ruleVersion := cfg.Version
 	if strings.TrimSpace(ruleVersion) == "" {
@@ -831,7 +836,7 @@ func generateReport(results []Result, cfg *Config, outputPath string, maxEntries
 		Memory:            extractMemoryModules(results),
 		BlockDevices:      extractBlockDevices(results),
 		BlockDevicesPath:  blockDevicesPath,
-		Networks:          extractNetworks(results),
+		Networks:          networks,
 		Results:           limitedResults,
 		Categories:        reportCategories(reportResults),
 		Keywords:          reportKeywords(reportResults),

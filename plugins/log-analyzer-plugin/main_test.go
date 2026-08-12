@@ -36,6 +36,43 @@ func TestParseSysInfo(t *testing.T) {
 	}
 }
 
+func TestParseSysInfoUGREENStructuredFields(t *testing.T) {
+	content := []byte(`{
+		"sn": "EC554JJ05240B7A7",
+		"systemVersion": "1.18.0.0093",
+		"deviceName": "IkkyuSan",
+		"platform": "x86_64",
+		"network": {"interface": [
+			{"name": "eth0", "mac": "98:6E:E8:2F:75:C8", "is_running": true, "ipv4": "192.168.0.6", "NetInterface": {"MTU": 1500}},
+			{"name": "eth1", "mac": "98:6E:E8:2F:75:C9", "is_running": false, "ipv4": "", "NetInterface": {"MTU": 1500}}
+		]},
+		"disk": {"devices": [{"disk_info": {
+			"model": "GeIL A3 2TB", "serial": "WKCH3413103", "size": 2000398934016,
+			"name": "sdc", "dev_name": "/dev/sdc", "slot": "ata1", "interface_type": "sata",
+			"label": "Hard Drive 1", "used_for": "Storage Pool 1", "status": 1,
+			"temperature": 40, "power_on_hours": 18000, "brand": "Unknown"
+		}, "smart_info": {"report": [{
+			"id": 5, "name": "Reallocated_Sector_Ct", "value": 100, "worst": 100,
+			"thresh": 50, "raw": 0, "raw_string": "0", "status": 1
+		}]}}]}
+	}`)
+
+	summary := parseSysInfo(content)
+	if summary == nil || summary.Platform != "x86_64" || len(summary.Networks) != 2 || len(summary.Disks) != 1 {
+		t.Fatalf("UGREEN 结构化信息解析失败: %#v", summary)
+	}
+	if summary.Networks[0].Name != "eth0" || summary.Networks[0].IPv4[0] != "192.168.0.6" || summary.Networks[0].MTU != "1500" || summary.Networks[1].Status != "未连接" {
+		t.Fatalf("网卡字段解析错误: %#v", summary.Networks)
+	}
+	disk := summary.Disks[0]
+	if disk.DeviceName != "/dev/sdc" || disk.InterfaceType != "sata" || disk.Temperature != "40" || disk.PowerOnHours != "750 天 0 小时" || disk.Health != "正常" {
+		t.Fatalf("磁盘关键字段解析错误: %#v", disk)
+	}
+	if disk.Capacity == "" || len(disk.Smart) != 1 || disk.Smart[0].Worst != "100" || disk.Smart[0].Threshold != "50" || disk.Smart[0].Raw != "0" || disk.Smart[0].Status != "正常" {
+		t.Fatalf("容量或 SMART 字段解析错误: %#v", disk)
+	}
+}
+
 func TestParseSysInfoDeviceSmartInfo(t *testing.T) {
 	content := []byte(`{"deviceName":"DX4600","disk":{"devices":[{"disk_info":{"name":"sda","label":"DataPool","slot":"ata1","model":"HDD"},"smart_info":{"report":[{"id":5,"name":"重映射扇区","raw":"0"},{"id":197,"name":"待处理坏扇区","raw":"2"},{"id":198,"name":"不可修复扇区","raw":"0"}]}}]}}`)
 	summary := parseSysInfo(content)
@@ -256,6 +293,30 @@ func TestDashboardTemplateHidesDiagnosticButtonWithoutTarget(t *testing.T) {
 	}
 	if strings.Contains(output.String(), `data-detail-target=`) {
 		t.Fatal("无诊断目标时不应渲染详情按钮")
+	}
+}
+
+func TestDashboardTemplateRendersStructuredSysInfoFields(t *testing.T) {
+	data := ReportData{
+		SysInfo: &SysInfoSummary{
+			Platform: "x86_64",
+			Disks: []DiskSummary{{Name: "sdc", DeviceName: "/dev/sdc", Capacity: "1.82 TB", InterfaceType: "sata", Temperature: "40", PowerOnHours: "750 天 0 小时", Smart: []SmartAttribute{{ID: 1, Name: "Raw_Read_Error_Rate", Value: "100", Worst: "100", Threshold: "50", Raw: "0", Status: "正常"}}}},
+		},
+		Networks: []NetworkInterfaceCard{{Name: "eth0", MAC: "AA:BB", IPv4: []string{"192.168.0.6"}, MTU: "1500", Status: "正常"}},
+	}
+	tmpl, err := template.New("report").Funcs(template.FuncMap{"split": strings.Split, "smartFocus": focusSmartAttributes, "smartRiskReminder": smartRiskReminder, "smartHasRisk": smartHasRisk}).Parse(dashboardReportTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := tmpl.Execute(&output, data); err != nil {
+		t.Fatal(err)
+	}
+	html := output.String()
+	for _, expected := range []string{"平台架构", "x86_64", "设备路径", "/dev/sdc", "1.82 TB", "750 天 0 小时", "查看全部 SMART", "Worst", "网络接口信息", "192.168.0.6"} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("结构化字段未渲染: %s", expected)
+		}
 	}
 }
 

@@ -15,10 +15,10 @@ const dashboardReportTemplate = `<!DOCTYPE html>
         .dashboard { max-width: 1500px; margin: 0 auto; padding: 28px 20px 60px; }
         .dashboard-layout { display: flex; flex-direction: column; gap: 18px; }
         .layout-left { order: 1; }
-        .layout-center { order: 3; min-width: 0; }
-        .layout-block { order: 2; }
+        .layout-center { order: 4; min-width: 0; }
+        .layout-block { order: 3; }
         .layout-disks { order: 3; }
-        .layout-right { order: 4; }
+        .layout-right { order: 2; }
         .hero { color: #fff; background: linear-gradient(135deg, #1d4ed8, #2563eb 58%, #38bdf8); border-radius: 18px; padding: 28px 32px; box-shadow: 0 12px 30px rgba(37,99,235,.2); }
         .hero h1 { font-size: clamp(1.65rem, 3vw, 2.35rem); font-weight: 700; margin: 0 0 8px; }
         .hero-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; color: rgba(255,255,255,.88); font-size: .9rem; }
@@ -61,6 +61,7 @@ const dashboardReportTemplate = `<!DOCTYPE html>
         .smart-unknown { color: #475569; background: #e2e8f0; }
         .status-ok { color: #15803d; background: #dcfce7; }
         .status-risk { color: #b91c1c; background: #fee2e2; }
+        .status-offline { color: #475569; background: #e2e8f0; }
         .status-unknown { color: #475569; background: #e2e8f0; }
         .severity-critical { color: #991b1b; background: #fee2e2; }
         .severity-warning { color: #92400e; background: #fef3c7; }
@@ -120,13 +121,51 @@ const dashboardReportTemplate = `<!DOCTYPE html>
     <details class="sysinfo-card mb-4" id="sysinfoAnchor">
         <summary class="h5 mb-3">设备概览 <span class="badge bg-primary">sysinfo.json</span></summary>
         <div class="overview-grid">
-            <div class="col-12 col-md-6 col-xl-3"><div class="info-label">设备型号</div><div class="info-value">{{if .SysInfo.Model}}{{.SysInfo.Model}}{{else}}未知{{end}}</div></div>
-            <div class="col-12 col-md-6 col-xl-3"><div class="info-label">序列号</div><div class="info-value">{{if .SysInfo.SerialNumber}}{{.SysInfo.SerialNumber}}{{else}}未知{{end}}</div></div>
-            <div class="col-12 col-md-6 col-xl-3"><div class="info-label">固件版本</div><div class="info-value">{{if .SysInfo.Firmware}}{{.SysInfo.Firmware}}{{else}}未知{{end}}</div></div>
+            <div class="overview-item"><div class="info-label">设备型号</div><div class="info-value">{{if .SysInfo.Model}}{{.SysInfo.Model}}{{else}}未知{{end}}</div></div>
+            <div class="overview-item"><div class="info-label">序列号</div><div class="info-value">{{if .SysInfo.SerialNumber}}{{.SysInfo.SerialNumber}}{{else}}未知{{end}}</div></div>
+            <div class="overview-item"><div class="info-label">固件版本</div><div class="info-value">{{if .SysInfo.Firmware}}{{.SysInfo.Firmware}}{{else}}未知{{end}}</div></div>
+            <div class="overview-item"><div class="info-label">平台架构</div><div class="info-value">{{if .SysInfo.Platform}}{{.SysInfo.Platform}}{{else}}未知{{end}}</div></div>
         </div>
         {{if .SysInfo.System}}<div class="overview-grid overview-secondary">{{range .SysInfo.System}}<div class="overview-item"><div class="info-label">{{.Key}}</div><div class="small text-break">{{.Value}}</div></div>{{end}}</div>{{end}}
         {{if .Memory}}<details class="mt-4"><summary class="h6 mb-3">内存信息 <span class="badge bg-secondary">{{len .Memory}} 条</span></summary><div class="row g-3">{{range .Memory}}<div class="col-12 col-md-6 col-xl-4"><div class="border rounded-3 p-3 h-100"><div class="info-label">大小</div><div class="info-value text-break">{{.Size}}</div><div class="info-label mt-2">品牌</div><div class="small text-break">{{if .Manufacturer}}{{.Manufacturer}}{{else}}未知{{end}}</div><div class="info-label mt-2">型号</div><div class="small text-break">{{if .Model}}{{.Model}}{{else}}未知{{end}}</div></div></div>{{end}}</div></details>{{end}}
-        {{if .SysInfo.Disks}}<details class="mt-4" id="disksAnchor"><summary class="h5 mb-3">硬盘与 SMART <span class="badge bg-primary">{{len .SysInfo.Disks}} 块</span> <span class="text-muted small ms-2">{{range $index, $disk := .SysInfo.Disks}}{{if $index}}、{{end}}{{if $disk.Name}}{{$disk.Name}}{{else if $disk.Label}}{{$disk.Label}}{{else}}未命名硬盘{{end}}{{end}}</span></summary><div class="row g-3">{{range $diskIndex, $disk := .SysInfo.Disks}}<div class="col-12 col-lg-6"><details class="disk-card border rounded-3 h-100" id="diagnosticDisk-{{$diskIndex}}"><summary class="disk-card-summary p-3"><div class="d-flex justify-content-between gap-2"><div><div class="fw-bold text-break">{{if .Name}}{{.Name}}{{else if .Label}}{{.Label}}{{else}}未命名硬盘{{end}}</div></div><span class="badge {{if smartHasRisk .Smart}}smart-risk{{else if eq .Health "风险"}}smart-risk{{else if .Health}}{{.Health}}{{else}}smart-normal{{end}}">{{if smartHasRisk .Smart}}风险{{else if .Health}}{{.Health}}{{else}}正常{{end}}</span></div></summary><div class="p-3 pt-0"><div class="row g-2 small"><div class="col-12 col-md-6"><span class="text-muted">label：</span><span class="text-break">{{if .Label}}{{.Label}}{{else}}未知{{end}}</span></div><div class="col-12 col-md-6"><span class="text-muted">存储池：</span><span class="text-break">{{if .UsedFor}}{{.UsedFor}}{{else}}未知{{end}}</span></div><div class="col-12 col-md-6"><span class="text-muted">型号：</span><span class="text-break">{{if .Model}}{{.Model}}{{else}}未知{{end}}</span></div><div class="col-12 col-md-6"><span class="text-muted">序列号：</span><span class="text-break">{{if .Serial}}{{.Serial}}{{else}}未知{{end}}</span></div></div>{{if smartFocus .Smart}}<div class="table-responsive mt-3"><table class="table table-sm smart-table mb-0"><thead><tr><th>ID</th><th>属性</th><th>当前</th><th>阈值</th><th>RAW</th><th>状态</th></tr></thead><tbody>{{range smartFocus .Smart}}<tr><td>{{.ID}}</td><td>{{.Name}}</td><td>{{.Value}}</td><td>{{.Threshold}}</td><td>{{.Raw}}</td><td><span class="badge {{if eq .Status "风险"}}smart-risk{{else if eq .Status "未知"}}smart-unknown{{else}}smart-normal{{end}}">{{.Status}}</span></td></tr>{{end}}</tbody></table></div>{{if smartRiskReminder .Smart}}<div class="smart-risk-note mt-3">{{smartRiskReminder .Smart}}</div>{{end}}{{else}}<div class="text-muted small mt-3">未发现 5/197/198 SMART 属性（原始 SMART 条目：{{len .Smart}} 条）</div>{{end}}</div></details></div>{{end}}</div></details>{{end}}
+        {{if .SysInfo.Disks}}
+        <details class="mt-4" id="disksAnchor">
+            <summary class="h5 mb-3">硬盘与 SMART <span class="badge bg-primary">{{len .SysInfo.Disks}} 块</span> <span class="text-muted small ms-2">{{range $index, $disk := .SysInfo.Disks}}{{if $index}}、{{end}}{{if $disk.Name}}{{$disk.Name}}{{else if $disk.Label}}{{$disk.Label}}{{else}}未命名硬盘{{end}}{{end}}</span></summary>
+            <div class="row g-3">
+                {{range $diskIndex, $disk := .SysInfo.Disks}}
+                <div class="col-12 col-lg-6">
+                    <details class="disk-card border rounded-3 h-100" id="diagnosticDisk-{{$diskIndex}}">
+                        <summary class="disk-card-summary p-3">
+                            <div class="d-flex justify-content-between gap-2">
+                                <div><div class="fw-bold text-break">{{if .Name}}{{.Name}}{{else if .Label}}{{.Label}}{{else}}未命名硬盘{{end}}</div><div class="text-muted small text-break">{{if .Model}}{{.Model}}{{else}}型号未知{{end}}</div></div>
+                                <span class="badge {{if smartHasRisk .Smart}}smart-risk{{else if eq .Health "风险"}}smart-risk{{else if eq .Health "未知"}}smart-unknown{{else}}smart-normal{{end}}">{{if smartHasRisk .Smart}}风险{{else if .Health}}{{.Health}}{{else}}正常{{end}}</span>
+                            </div>
+                        </summary>
+                        <div class="p-3 pt-0">
+                            <div class="row g-2 small">
+                                <div class="col-12 col-md-6"><span class="text-muted">label：</span><span class="text-break">{{if .Label}}{{.Label}}{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">设备路径：</span><span class="text-break">{{if .DeviceName}}{{.DeviceName}}{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">容量：</span><span class="text-break">{{if .Capacity}}{{.Capacity}}{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">接口：</span><span class="text-break">{{if .InterfaceType}}{{.InterfaceType}}{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">槽位：</span><span class="text-break">{{if .Slot}}{{.Slot}}{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">序列号：</span><span class="text-break">{{if .Serial}}{{.Serial}}{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">温度：</span><span class="text-break">{{if .Temperature}}{{.Temperature}} °C{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">通电时长：</span><span class="text-break">{{if .PowerOnHours}}{{.PowerOnHours}}{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">品牌：</span><span class="text-break">{{if .Brand}}{{.Brand}}{{else}}未采集{{end}}</span></div>
+                                <div class="col-12 col-md-6"><span class="text-muted">存储用途：</span><span class="text-break">{{if .UsedFor}}{{.UsedFor}}{{else}}未采集{{end}}</span></div>
+                            </div>
+                            {{if smartFocus .Smart}}
+                            <div class="table-responsive mt-3"><table class="table table-sm smart-table mb-0"><thead><tr><th>ID</th><th>属性</th><th>当前</th><th>Worst</th><th>阈值</th><th>RAW</th><th>状态</th></tr></thead><tbody>{{range smartFocus .Smart}}<tr><td>{{.ID}}</td><td>{{.Name}}</td><td>{{if .Value}}{{.Value}}{{else}}未采集{{end}}</td><td>{{if .Worst}}{{.Worst}}{{else}}未采集{{end}}</td><td>{{if .Threshold}}{{.Threshold}}{{else}}未采集{{end}}</td><td>{{if .Raw}}{{.Raw}}{{else}}未采集{{end}}</td><td><span class="badge {{if eq .Status "风险"}}smart-risk{{else if eq .Status "未知"}}smart-unknown{{else}}smart-normal{{end}}">{{if .Status}}{{.Status}}{{else}}未采集{{end}}</span></td></tr>{{end}}</tbody></table></div>
+                            {{end}}
+                            {{if .Smart}}<details class="mt-3"><summary class="text-primary small">查看全部 SMART（{{len .Smart}} 条）</summary><div class="table-responsive mt-2"><table class="table table-sm smart-table mb-0"><thead><tr><th>ID</th><th>属性</th><th>当前</th><th>Worst</th><th>阈值</th><th>RAW</th><th>状态</th></tr></thead><tbody>{{range .Smart}}<tr><td>{{.ID}}</td><td class="text-break">{{if .Name}}{{.Name}}{{else}}未命名属性{{end}}</td><td>{{if .Value}}{{.Value}}{{else}}未采集{{end}}</td><td>{{if .Worst}}{{.Worst}}{{else}}未采集{{end}}</td><td>{{if .Threshold}}{{.Threshold}}{{else}}未采集{{end}}</td><td>{{if .Raw}}{{.Raw}}{{else}}未采集{{end}}</td><td><span class="badge {{if eq .Status "风险"}}smart-risk{{else if eq .Status "未知"}}smart-unknown{{else}}smart-normal{{end}}">{{if .Status}}{{.Status}}{{else}}未采集{{end}}</span></td></tr>{{end}}</tbody></table></div></details>{{end}}
+                            {{if smartRiskReminder .Smart}}<div class="smart-risk-note mt-3">{{smartRiskReminder .Smart}}</div>{{end}}
+                        </div>
+                    </details>
+                </div>
+                {{end}}
+            </div>
+        </details>
+        {{end}}
         <details class="mt-4"><summary class="text-primary">查看原始 JSON</summary><pre class="context-box mt-2 mb-0"><code>{{.SysInfo.RawJSON}}</code></pre></details>
     </details>
     {{end}}
@@ -142,7 +181,7 @@ const dashboardReportTemplate = `<!DOCTYPE html>
     {{end}}
 
     {{if .Networks}}
-    <details class="sysinfo-card mb-4"><summary class="h5 mb-3">网络接口信息</summary><div class="row g-3">{{range .Networks}}<div class="col-12 col-md-6 col-xl-4"><div class="border rounded-3 p-3 h-100"><div class="d-flex justify-content-between gap-2"><div class="fw-bold">{{.Name}}</div><span class="badge {{if eq .Status "正常"}}status-ok{{else if eq .Status "风险"}}status-risk{{else}}status-unknown{{end}}">{{.Status}}</span></div><div class="small mt-2"><div><span class="text-muted">状态：</span>{{if .State}}{{.State}}{{else}}未知{{end}} · {{if .Carrier}}{{.Carrier}}{{else}}Carrier 未知{{end}}</div><div><span class="text-muted">MAC：</span>{{if .MAC}}{{.MAC}}{{else}}未知{{end}}</div><div><span class="text-muted">IPv4：</span>{{if .IPv4}}{{range .IPv4}}{{.}} {{end}}{{else}}无{{end}}</div><div><span class="text-muted">IPv6：</span>{{if .IPv6}}{{range .IPv6}}{{.}} {{end}}{{else}}无{{end}}</div><div><span class="text-muted">MTU：</span>{{if .MTU}}{{.MTU}}{{else}}未知{{end}}</div></div></div></div>{{end}}</div></details>
+    <details class="sysinfo-card mb-4"><summary class="h5 mb-3">网络接口信息 <span class="badge bg-primary">{{len .Networks}} 个接口</span></summary><div class="table-responsive"><table class="table table-sm table-striped align-middle mb-0"><thead><tr><th>接口</th><th>MAC 地址</th><th>IPv4</th><th>IPv6</th><th>状态</th><th>MTU</th></tr></thead><tbody>{{range .Networks}}<tr><td class="fw-bold text-nowrap">{{if .Name}}{{.Name}}{{else}}未命名接口{{end}}</td><td class="text-break"><code>{{if .MAC}}{{.MAC}}{{else}}未采集{{end}}</code></td><td class="text-break">{{if .IPv4}}{{range $index, $address := .IPv4}}{{if $index}}、{{end}}{{$address}}{{end}}{{else}}无{{end}}</td><td class="text-break">{{if .IPv6}}{{range $index, $address := .IPv6}}{{if $index}}、{{end}}{{$address}}{{end}}{{else}}无{{end}}</td><td><span class="badge {{if eq .Status "正常"}}status-ok{{else if eq .Status "风险"}}status-risk{{else if eq .Status "未连接"}}status-offline{{else}}status-unknown{{end}}">{{if .Status}}{{.Status}}{{else}}未知{{end}}</span><div class="text-muted small mt-1">{{if .State}}{{.State}}{{else}}状态未知{{end}}{{if .Carrier}} · {{.Carrier}}{{end}}</div></td><td>{{if .MTU}}{{.MTU}}{{else}}未采集{{end}}</td></tr>{{end}}</tbody></table></div></details>
     {{end}}
 	</aside>
 
