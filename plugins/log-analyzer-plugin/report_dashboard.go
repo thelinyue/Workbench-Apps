@@ -166,7 +166,6 @@ const dashboardReportTemplate = `<!DOCTYPE html>
             </div>
         </details>
         {{end}}
-        <details class="mt-4"><summary class="text-primary">查看原始 JSON</summary><pre class="context-box mt-2 mb-0"><code>{{.SysInfo.RawJSON}}</code></pre></details>
     </details>
     {{end}}
 	</aside>
