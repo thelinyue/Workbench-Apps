@@ -1,6 +1,6 @@
 # Hephaestus Workbench Plugin Sources
 
-本仓库集中维护 Hephaestus Workbench 的插件源码。每个插件仍然独立构建、独立版本和独立发布，但共享同一个源码仓库。
+本仓库集中维护 Hephaestus Workbench 的插件源码。仓库保持私有；每个插件仍然独立构建、独立版本和独立发布，但共享同一个源码仓库。
 
 ## 插件
 
@@ -16,7 +16,8 @@ log-analyzer-plugin/v1.0.0
 log-analyzer-rule-builder/v1.0.0
 ```
 
-GitHub Release 的 ZIP 包仍按插件分别发布。公共插件目录位于
+插件 ZIP 包不在本私有仓库公开下载，而是发布到公开的
+[`Hephaestus-Workbench-Releases`](https://github.com/thelinyue/Hephaestus-Workbench-Releases) 仓库。公共插件目录位于
 [`Hephaestus-Workbench-Plugins`](https://github.com/thelinyue/Hephaestus-Workbench-Plugins)。
 
 ## 迁移说明
