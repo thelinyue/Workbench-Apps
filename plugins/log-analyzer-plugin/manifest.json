@@ -1,0 +1,7 @@
+{
+  "id": "log-analyzer",
+  "name": "日志分析插件",
+  "version": "1.0.0",
+  "type": "Exe",
+  "entry": "log_analyzer.exe"
+}
