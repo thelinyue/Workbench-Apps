@@ -1,7 +1,7 @@
 # Log Analyzer Rule Builder
 
 日志分析规则编辑器是赫菲斯托斯工程工作台的离线 EXE 插件，用于维护
-[`log-analyzer-plugin`](https://github.com/thelinyue/log-analyzer-plugin) 使用的 JSON 规则。
+[`log-analyzer-plugin`](https://github.com/thelinyue/Hephaestus-Workbench-Plugin-Sources/tree/main/plugins/log-analyzer-plugin) 使用的 JSON 规则。
 
 ## 功能
 
