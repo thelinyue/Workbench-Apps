@@ -8,7 +8,7 @@
 log_analyzer.exe --case <case-id> --input <source-path> --output <output-path>
 ```
 
-插件成功时返回退出码 `0`，并在输出目录生成报告。插件 ID 为 `log-analyzer`。
+插件成功时返回退出码 `0`，并在输出目录生成报告。插件 ID 为 `log-analyzer`，当前版本为 `1.6`。
 
 ## 本地开发
 
