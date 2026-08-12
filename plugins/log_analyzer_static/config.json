@@ -1,0 +1,247 @@
+{
+    "files": [
+        {
+            "name": "sysinfo.json", 
+            "category": "系统信息",
+            "keywords": [
+                {"term": "\"sn\":", "result": "SN和固件版本","regex": false, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "disk_info", "result": "硬盘信息","regex": false, "context_lines": 16, "context_direction": "down", "search_direction": "up"},
+                {"term": "\"id\": 5,", "result": "硬盘值5(raw值不为0则有扇区重映射)","regex": false, "context_lines": 8, "context_direction": "down", "search_direction": "up"},
+                {"term": "\"id\": 197,", "result": "硬盘值197(raw值不为0则有坏道)","regex": false, "context_lines": 8, "context_direction": "down", "search_direction": "up"},
+                {"term": "\"id\": 198,", "result": "硬盘值198(raw值不为0则有坏道)","regex": false, "context_lines": 8, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "lsblk.log", 
+            "category": "lsblk",
+            "keywords": [
+                {"term": "NAME", "result": "块设备信息","regex": false, "context_lines": 500, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "dmesg.txt",
+            "category": "内核崩溃日志",
+            "keywords": [
+                {"term": "aq_ring_rx_clean.*atlantic", "result": "万兆网卡崩溃","regex": true, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "double fault, error_code: 0x0", "result": "error_code: 0x0通常与页故障（Page Fault）相关,建议检查内存条","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "BUG: kernel NULL pointer dereference", "result": "空指针引用，内存或者程序bug","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "Oops: general protection fault", "result": "内核崩溃！","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "unable to handle page fault for address", "result": "未映射的物理内存地址或无效的虚拟地址(检查内存条)","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "general protection fault.*probably for non-canonical address", "result": "内核或驱动访问未映射/受保护的内存区域,指针计算错误（检查内存条）","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"} 
+            ]
+        },        
+        {
+            "name": "kern", 
+            "category": "内核服务",
+            "keywords": [
+                {"term": "DMI: UGREEN", "result": "设备型号","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*I/O Error", "result": "nvmeI/O错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*I/O.*timeout.*reset controller", "result": "nvme控制器I/O超时","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*Device not ready; aborting reset", "result": "nvme尝试重置控制器，检测到设备未就绪，重置操作终止","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*frozen state error detected, reset controller", "result": "nvme控制器重置（硬件或驱动异常）","regex": true, "context_lines": 8, "context_direction": "down", "search_direction": "up"},
+                {"term": "failed: Result: hostbyte=DID_BAD_TARGET driverbyte=DRIVER_OK", "result": "系统无法与硬盘通讯，驱动正常","regex": false, "context_lines": 2, "context_direction": "up", "search_direction": "up"},
+                {"term": "ata.*hard resetting link", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "ata.*failed.*INIT_DEV_PARAMS", "result": "硬盘获取信息失败，硬盘或SATA异常","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "ata.*hard resetting link", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "sd.*FAILED Result: hostbyte=DID_OK driverbyte=DRIVER_OK", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 3, "context_direction": "down", "search_direction": "up"},
+                {"term": "BUG: kernel NULL pointer dereference", "result": "空指针引用，内存或者程序bug","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "BUG: Bad page map", "result": "内存管理错误（检查内存）","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "segfault at.*sp.*error", "result": "程序指针异常，程序异常退出（内存、程序异常）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "general protection fault.*ip.*sp", "result": "程序指针异常，程序异常退出（内存、程序异常）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "EXT4-fs.*error", "result": "ext4文件系统错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "BTRFS error", "result": "BTRFS文件系统错误","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "i915.*timed out", "result": "i915 GPU异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "i915.*GPU HANG", "result": "i915 GPU异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "thunderbolt.*retimer disconnected", "result": "雷电连接已断开（查看断开间隔、频率判断问题）","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "usb usb.*-port.*config error", "result": "USB接口识别异常","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "syslog",
+            "category": "系统日志",
+            "keywords": [
+                {"term": "dmidecode 3.4", "result": "内存信息","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Manufacturer: QEMU", "result": "可能是虚拟机搭建的绿联云，虚拟设备！！！","regex": false, "context_lines": 15, "context_direction": "down", "search_direction": "up"},
+                {"term": "EXT4-fs.*error", "result": "ext4文件系统错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Read-only file system", "result": "文件系统只读，读写文件失败","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "filemgr_serv.*ug_acl_del_ace malloc fail", "result": "UGACL权限应用失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*I/O Error", "result": "nvmeI/O错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*I/O.*timeout.*reset controller", "result": "nvme控制器I/O超时","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*Device not ready; aborting reset", "result": "nvme尝试重置控制器，检测到设备未就绪，重置操作终止","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "smartd.*Critical Warning \\(0x04\\): Reliability", "result": "硬盘可靠性降低，建议备份数据（写入寿命警告）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "I/O error.*sector", "result": "硬盘I/O错误，扇区异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "ata.*failed.*INIT_DEV_PARAMS", "result": "硬盘获取信息失败，硬盘或SATA异常","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "ata.*hard resetting link", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "sd.*FAILED Result: hostbyte=DID_OK driverbyte=DRIVER_OK", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 3, "context_direction": "down", "search_direction": "up"},
+                {"term": "BUG: kernel NULL pointer dereference", "result": "空指针引用，内存或者程序bug","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "BUG: Bad page map", "result": "内存管理错误（检查内存）","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
+                {"term": "segfault at.*sp.*error", "result": "程序指针异常，程序异常退出（内存、程序异常）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "general protection fault.*ip.*sp", "result": "程序指针异常，程序异常退出（内存、程序异常）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "EXT4-fs.*error", "result": "ext4文件系统错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "BTRFS error", "result": "BTRFS文件系统错误","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "postgres.*No space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": true, "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "i915.*timed out", "result": "i915 GPU异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "i915.*GPU HANG", "result": "i915 GPU异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "earlyoom.*sending SIGKILL", "result": "程序内存占用过高，触发oom","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "earlyoom.*sending SIGKILL.*qemu-system-x86", "result": "虚拟机实例内存占用过高，触发oom","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "journal-5days",
+            "category": "5天日志记录",
+            "keywords": [
+                {"term": "Failed to open system journal.*No space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Read-only file system", "result": "文件系统只读，读写文件失败","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "filemgr_serv.*ug_acl_del_ace malloc fail", "result": "UGACL权限应用失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*I/O Error", "result": "nvmeI/O错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*I/O.*timeout.*reset controller", "result": "nvme控制器I/O超时","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "nvme.*Device not ready; aborting reset", "result": "nvme尝试重置控制器，检测到设备未就绪，重置操作终止","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "smartd.*Critical Warning \\(0x04\\): Reliability", "result": "硬盘可靠性降低，建议备份数据（写入寿命警告）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "I/O error.*sector", "result": "硬盘I/O错误，扇区异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "ata.*failed.*INIT_DEV_PARAMS", "result": "硬盘获取信息失败，硬盘或SATA异常","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "ata.*hard resetting link", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "sd.*FAILED Result: hostbyte=DID_OK driverbyte=DRIVER_OK", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 3, "context_direction": "down", "search_direction": "up"},
+                {"term": "segfault at.*sp.*error", "result": "程序指针异常，程序异常退出（内存、程序异常）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "general protection fault.*ip.*sp", "result": "程序指针异常，程序异常退出（内存、程序异常）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "EXT4-fs.*error", "result": "ext4文件系统错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "BTRFS error", "result": "BTRFS文件系统错误","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "postgres.*No space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "i915.*timed out", "result": "i915 GPU异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "i915.*GPU HANG", "result": "i915 GPU异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "error.log",
+            "category": "nginx_error",
+            "keywords": [
+                {"term": "No space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "ctl_serv",
+            "category": "控制面板",
+            "keywords": [
+                {"term": "cloudhttp/client.*ugnas.com.*dial tcp.*i/o timeout", "result": "网络连接超时，外网访问可能异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "cloudhttp/client.*dial tcp: lookup center.ugnas.com: Temporary failure in name resolution", "result": "网络不可达，请检查网络和DNS设置","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "cloudhttp/doh/whitelist.*connect: network is unreachable", "result": "网络不可达，请检查网络和DNS设置","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "cloudhttp/doh/alidns.*connect: network is unreachable", "result": "网络不可达，请检查网络和DNS设置","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "ddnsprovider/provider/tencent.*The SecretId is not found", "result": "腾讯云API密钥ID不正确（不支持DNSPod Token）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "ups/ups\\.go.*unexpected end of JSON input", "result": "UPS JSON配置文件错误，加载失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "entry\\.go.*检测到定时脏数据CronID.*CronSet", "result": "DDNS定时任务被清理,DDNS更新可能失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "aliyun.*Forbidden.RAM", "result": "ram认证失败，不支持该认证方式","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "networkserv/netmgr/bridge/private.*create bridge.*failed.*Device or resource busy", "result": "网卡设备正在被使用，创建网桥失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "thumb_serv",
+            "category": "缩略图服务",
+            "keywords": [
+                {"term": "thumbnail_serv.*no space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"} 
+            ]
+        },
+        {
+            "name": "thumb_tool",
+            "category": "缩略图工具",
+            "keywords": [
+                {"term": "thumb_tool.*No space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"} 
+            ]
+        },
+        {
+            "name": "ifconfig.log",
+            "category": "网卡接口状态",
+            "keywords": [
+                {"term": "NO-CARRIER.*state DOWN", "result": "网口未检测到有效信号，请检查DHCP服务或者NAS网口是否正常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"} 
+            ]
+        },
+        {
+            "name": "app_serv",
+            "category": "应用中心",
+            "keywords": [
+                {"term": "/ugreen/.config/.appstore/@cache/upk.json: no such file or directory", "result": "未找到upk.json应用列表文件，应用可能推送失败","regex": false, "context_lines": 2, "context_direction": "up", "search_direction": "up"},
+                {"term": "remote hash.*not match local hash", "result": "云端upk.json与本地不一致","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "ugnas.com: i/o timeout", "result": "网络超时，应用中心下载应用可能异常","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "iscsi_serv",
+            "category": "SAN Manager",
+            "keywords": [
+                {"term": "Cannot set dbroot to /etc/target", "result": "iSCSI配置文件缺失，创建iSCSI失败","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "video_serv",
+            "category": "影视中心",
+            "keywords": [
+                {"term": "Failed to delete source file.*debus DeletePathsV2 code is not 0", "result": "dbus删除code非0，对该文件无权限删除","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Client.Timeout exceeded while awaiting headers", "result": "等待服务器响应超时(检查网络环境)","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "No space left on device", "result": "影视中心应用所在存储空间容量不足","regex": false, "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "video_serv.*no space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "photo_serv",
+            "category": "相册",
+            "keywords": [
+                {"term": "CheckPictureReadAccess picture.*not found or own by", "result": "图片权属异常，图片可能在相册无缩略图（可以检查有拔盘，跨个人目录移动图片）","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": ".*Not a valid.*looks more like", "result": "文件类型和后缀不匹配，修改拍摄时间失败","regex": true, "context_lines": 2, "context_direction": "up", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "kvm_serv",
+            "category": "虚拟机",
+            "keywords": [
+                {"term": "GDBuS.Error:org.freedesktop.DBus.Error.TimedOut", "result": "用户执行了升级内核命令，建议恢复出厂设置恢复","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "database disk image is malformed", "result": "虚拟机数据库损坏","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "office_serv",
+            "category": "在线文档",
+            "keywords": [
+                {"term": "ERROR.*read-only file system", "result": "文件系统只读，读写文件失败","regex": true, "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "download_serv",
+            "category": "下载中心",
+            "keywords": [
+                {"term": "No space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "sync.",
+            "category": "同步与备份服务",
+            "keywords": [
+                {"term": "no space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        },
+        {
+            "name": "cloud_serv",
+            "category": "网盘工具",
+            "keywords": [
+                {"term": "115.*err:exceeded_the_limit_of_this_directory", "result": "115网盘目录限制，单层目录文件数量超过1w","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "115.*code: 40140126, msg: access_token", "result": "115网盘token验证失败，可尝试退出重新登陆","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "ERROR.*read-only file system", "result": "文件系统只读，读写文件失败","regex": true, "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "lookup localhost.*no such host", "result": "hosts文件可能异常，网络错误","regex": true, "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "UserNotAllowedAccessResource", "result": "用户无权限访问资源（阿里云盘账号异常）","regex": false, "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "googleapi: Error 403: Quota exceeded for quota metric", "result": "Google Drive通道当前拥堵，请稍后再试","regex": true, "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "Google Drive channel is currently congested, please try again later", "result": "Google Drive通道当前拥堵，请稍后再试","regex": true, "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "connect: network is unreachable", "result": "网络不可达，请检查网络和DNS设置","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "read:connection reset by peer", "result": "网络不可达，请检查网络和DNS设置","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "baidu/fs.*fail.*101003", "result": "百度网盘101003错误代码，无权限写入或存储空间已满","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "baidu_err_100014", "result": "百度网盘100014错误代码，文件名称存在特殊字符","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "get baidu pan user information failed", "result": "百度网盘账号有异常，尝试电脑登录该网盘账号","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "Build version", "result": "构建版本","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"}
+            ]
+        }
+    ]
+}    
