@@ -265,7 +265,7 @@ func TestDashboardTemplateRendersDiagnosticTargets(t *testing.T) {
 	data := ReportData{
 		DiagnosticSummary: "检测到磁盘风险",
 		DiagnosticTarget:  "diagnosticIssue-0-0",
-		Results: []Result{{File: "system.log", GroupedIssues: []GroupedIssue{{Keyword: "SATA", Message: "disk fault", Severity: SeverityCritical}}}},
+		Results:           []Result{{File: "system.log", GroupedIssues: []GroupedIssue{{Keyword: "SATA", Message: "disk fault", Severity: SeverityCritical}}}},
 	}
 	tmpl, err := template.New("report").Funcs(template.FuncMap{"split": strings.Split, "smartFocus": focusSmartAttributes, "smartRiskReminder": smartRiskReminder, "smartHasRisk": smartHasRisk}).Parse(dashboardReportTemplate)
 	if err != nil {
@@ -300,7 +300,7 @@ func TestDashboardTemplateRendersStructuredSysInfoFields(t *testing.T) {
 	data := ReportData{
 		SysInfo: &SysInfoSummary{
 			Platform: "x86_64",
-			Disks: []DiskSummary{{Name: "sdc", DeviceName: "/dev/sdc", Capacity: "1.82 TB", InterfaceType: "sata", Temperature: "40", PowerOnHours: "750 天 0 小时", Smart: []SmartAttribute{{ID: 1, Name: "Raw_Read_Error_Rate", Value: "100", Worst: "100", Threshold: "50", Raw: "0", Status: "正常"}}}},
+			Disks:    []DiskSummary{{Name: "sdc", DeviceName: "/dev/sdc", Capacity: "1.82 TB", InterfaceType: "sata", Temperature: "40", PowerOnHours: "750 天 0 小时", Smart: []SmartAttribute{{ID: 1, Name: "Raw_Read_Error_Rate", Value: "100", Worst: "100", Threshold: "50", Raw: "0", Status: "正常"}}}},
 		},
 		Networks: []NetworkInterfaceCard{{Name: "eth0", MAC: "AA:BB", IPv4: []string{"192.168.0.6"}, MTU: "1500", Status: "正常"}},
 	}
