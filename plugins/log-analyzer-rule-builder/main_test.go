@@ -52,6 +52,7 @@ func TestEditorIncludesReadOnlyOfficialRulesAndTemplates(t *testing.T) {
 		"id=\"maintainerReleaseDialog\"",
 		"setMaintainerToken",
 		"submitMaintainerRules",
+		"maintainerSetupDialog').classList.add('hidden')",
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("editor.html 缺少 %q", expected)

@@ -49,7 +49,7 @@ go vet ./...
 Web 插件发布包不再构建 EXE，只包含 `editor.html`、`manifest.json`、`README.md` 和 `LICENSE`：
 
 ```powershell
-.\scripts\build-release.ps1 -Version 1.2.0
+.\scripts\build-release.ps1 -Version 1.2.2
 ```
 
 ## 许可
