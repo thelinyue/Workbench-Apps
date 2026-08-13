@@ -24,9 +24,37 @@ func TestRunWritesSelfContainedReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(content)
-	for _, expected := range []string{"规则编辑器", "导入 JSON", "导出规则", "application/json"} {
+    for _, expected := range []string{"分析规则编辑器", "保存我的规则", "导出我的规则", "application/json"} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("report.html 缺少 %q", expected)
+		}
+	}
+}
+
+func TestEditorIncludesReadOnlyOfficialRulesAndTemplates(t *testing.T) {
+	content, err := os.ReadFile("editor.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(content)
+	for _, expected := range []string{
+		"id=\"officialList\"",
+		"id=\"officialCategories\"",
+		"id=\"template\"",
+		"linux-error",
+		"hostInfo",
+		"主规则由维护者发布",
+		"event.ctrlKey",
+		"id=\"maintainerUnlockDialog\"",
+		"id=\"maintainerSetupDialog\"",
+		"getMaintainerSetupState",
+		"configureMaintainer",
+		"id=\"maintainerReleaseDialog\"",
+		"setMaintainerToken",
+		"submitMaintainerRules",
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("editor.html 缺少 %q", expected)
 		}
 	}
 }
