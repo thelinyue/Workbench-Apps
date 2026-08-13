@@ -19,6 +19,8 @@ const dashboardReportTemplate = `<!DOCTYPE html>
         .layout-block { order: 3; }
         .layout-disks { order: 3; }
         .layout-right { order: 2; }
+        /* 折叠卡片统一由父级 gap 控制间距，避免 mb-4 与折叠状态的 margin 叠加。 */
+        .layout-left, .layout-right { display: flex; flex-direction: column; gap: 18px; }
         .hero { color: #fff; background: linear-gradient(135deg, #1d4ed8, #2563eb 58%, #38bdf8); border-radius: 18px; padding: 28px 32px; box-shadow: 0 12px 30px rgba(37,99,235,.2); }
         .hero h1 { font-size: clamp(1.65rem, 3vw, 2.35rem); font-weight: 700; margin: 0 0 8px; }
         .hero-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; color: rgba(255,255,255,.88); font-size: .9rem; }
@@ -44,6 +46,7 @@ const dashboardReportTemplate = `<!DOCTYPE html>
         .sysinfo-card:not([open]) { padding: 0 !important; margin-bottom: 12px !important; min-height: 0; }
         .sysinfo-card:not([open]) > summary,
         .sysinfo-card:not([open]) > summary.h5 { margin: 0 !important; padding: 13px 20px; }
+        .layout-left > .sysinfo-card, .layout-right > .sysinfo-card, .dashboard-layout > .layout-block { margin-bottom: 0 !important; }
         .overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
         .overview-item { min-width: 0; padding: 13px 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 11px; }
         .overview-item .info-value { margin-top: 5px; }
@@ -207,7 +210,6 @@ const dashboardReportTemplate = `<!DOCTYPE html>
                 <details class="issue-group" id="diagnosticIssue-{{$fileIndex}}-{{$groupIndex}}" data-keyword="{{$group.Keyword}}" data-severity="{{$group.Severity}}">
                     <summary class="issue-head d-flex flex-wrap align-items-center gap-2"><span class="badge severity-{{$group.Severity}}">{{if eq $group.Severity "critical"}}严重{{else if eq $group.Severity "warning"}}关注{{else}}信息{{end}}</span><span class="badge bg-warning text-dark">{{$group.Keyword}}</span><span class="issue-title-message">{{$group.Message}}</span><span class="text-muted small">{{$group.TotalCount}} 次命中{{if ne $group.ShowCount $group.TotalCount}}，默认显示最新 {{$group.ShowCount}} 次{{end}}</span></summary>
                     <div class="issue-item" data-search="{{$group.Keyword}} {{$group.Message}} {{range $issue := $group.Issues}}{{$issue.Context}} {{end}}">
-                        <div class="d-flex flex-wrap align-items-center gap-2 mb-2"><span class="badge bg-secondary">{{$group.TotalCount}} 个命中点</span></div>
                         <div class="context-box"><button class="copy-context btn btn-sm btn-outline-light" type="button">复制全部上下文</button>{{range $issue := $group.Issues}}{{range $line := $issue.ContextLines}}<div class="context-line {{if $line.Hit}}context-line-hit{{end}}"><span class="line-number">{{$line.Number}}</span><code class="context-text">{{$line.Text}}</code></div>{{end}}{{end}}</div>
                     </div>
                 </details>

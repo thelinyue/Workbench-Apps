@@ -37,6 +37,7 @@ var (
 	pluginCase   = flag.String("case", "", "工作台传入的案例标识")
 	pluginInput  = flag.String("input", "", "工作台传入的日志目录或压缩包")
 	pluginOutput = flag.String("output", "", "工作台传入的报告输出目录")
+	pluginRules  = flag.String("rules", "", "工作台当前激活的外部规则 JSON 路径")
 	targetPath   = flag.String("d", "", "指定目标路径或压缩包")
 	reportOutput = flag.String("o", "", "指定报告输出目录")
 	maxEntries   = flag.Int("n", 50, "每个关键词默认显示最新的最大条目数")
@@ -178,6 +179,14 @@ func main() {
 
 	startTime := time.Now()
 	cfg := loadConfig()
+	if strings.TrimSpace(*pluginRules) != "" {
+		var err error
+		cfg, err = loadExternalConfig(*pluginRules)
+		if err != nil {
+			log.Printf("外部规则加载失败：%v", err)
+			os.Exit(1)
+		}
+	}
 	finalDir := preprocessTarget(*targetPath)
 	decompressGzFiles(finalDir)
 	results := analyzeFiles(finalDir, cfg)
@@ -195,7 +204,7 @@ func main() {
 	}
 
 	fmt.Printf("分析完成，总耗时: %.2f秒\n", time.Since(startTime).Seconds())
-	fmt.Printf("当前程序版本1.0.0")
+	fmt.Printf("当前程序版本1.0.3")
 }
 
 // resolveReportPath 保留旧版默认输出位置，同时允许工作台把完整报告输出到指定目录。
@@ -303,9 +312,30 @@ func decompressTgz(src, dest string) error {
 }
 
 func loadConfig() *Config {
-	var cfg Config
-	if err := json.Unmarshal(embeddedConfig, &cfg); err != nil {
+	cfg, err := loadConfigData(embeddedConfig, false)
+	if err != nil {
 		log.Fatal("内置配置错误: ", err)
+	}
+	return cfg
+}
+
+func loadExternalConfig(path string) (*Config, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("无法读取规则文件 %q：%w", path, err)
+	}
+	cfg, err := loadConfigData(content, true)
+	if err != nil {
+		return nil, fmt.Errorf("规则文件 %q 校验失败：%w", path, err)
+	}
+	return cfg, nil
+}
+
+// loadConfigData 统一解析内置和外部规则。内置配置需要兼容历史数据，外部规则则必须严格校验。
+func loadConfigData(content []byte, strict bool) (*Config, error) {
+	var cfg Config
+	if err := json.Unmarshal(content, &cfg); err != nil {
+		return nil, fmt.Errorf("JSON 格式错误：%w", err)
 	}
 	for i := range cfg.Files {
 		cfg.Files[i].Order = i
@@ -316,26 +346,29 @@ func loadConfig() *Config {
 		keywords := make([]Keyword, 0, len(cfg.Files[i].Keywords))
 		for j, kw := range cfg.Files[i].Keywords {
 			if strings.TrimSpace(kw.Term) == "" {
-				log.Printf("规则警告：文件 %s 存在空关键词，已跳过", cfg.Files[i].Name)
-				continue
+				if !strict {
+					log.Printf("规则警告：文件 %s 存在空关键词，已跳过", cfg.Files[i].Name)
+					continue
+				}
+				return nil, fmt.Errorf("文件 %s 存在空关键词", cfg.Files[i].Name)
 			}
 			if strings.TrimSpace(kw.Result) == "" {
 				log.Printf("规则警告：文件 %s 的关键词 %s 没有问题描述", cfg.Files[i].Name, kw.Term)
 			}
 			if kw.ContextLines < 0 {
-				log.Fatalf("规则错误：文件 %s 的关键词 %s 上下文行数不能为负数", cfg.Files[i].Name, kw.Term)
+				return nil, fmt.Errorf("文件 %s 的关键词 %s 上下文行数不能为负数", cfg.Files[i].Name, kw.Term)
 			}
 			if kw.ContextDirection == "" {
 				kw.ContextDirection = "down"
 			}
 			if kw.ContextDirection != "up" && kw.ContextDirection != "down" {
-				log.Fatalf("规则错误：文件 %s 的关键词 %s 上下文方向必须是 up 或 down", cfg.Files[i].Name, kw.Term)
+				return nil, fmt.Errorf("文件 %s 的关键词 %s 上下文方向必须是 up 或 down", cfg.Files[i].Name, kw.Term)
 			}
 			if kw.SearchDirection == "" {
 				kw.SearchDirection = "down"
 			}
 			if kw.SearchDirection != "up" && kw.SearchDirection != "down" {
-				log.Fatalf("规则错误：文件 %s 的关键词 %s 搜索方向必须是 up 或 down", cfg.Files[i].Name, kw.Term)
+				return nil, fmt.Errorf("文件 %s 的关键词 %s 搜索方向必须是 up 或 down", cfg.Files[i].Name, kw.Term)
 			}
 			if !kw.IsRegex && (strings.Contains(kw.Term, ".*") || strings.Contains(kw.Term, ".+")) {
 				log.Printf("规则警告：文件 %s 的关键词 %s 含有正则写法但 regex=false", cfg.Files[i].Name, kw.Term)
@@ -344,14 +377,17 @@ func loadConfig() *Config {
 			kw.Order = j
 			ruleKey := fmt.Sprintf("%s\x00%t\x00%s", kw.Term, kw.IsRegex, kw.Result)
 			if seen[ruleKey] {
-				log.Printf("规则警告：文件 %s 存在重复规则 %s，已跳过重复项", cfg.Files[i].Name, kw.Term)
-				continue
+				if !strict {
+					log.Printf("规则警告：文件 %s 存在重复规则 %s，已跳过重复项", cfg.Files[i].Name, kw.Term)
+					continue
+				}
+				return nil, fmt.Errorf("文件 %s 存在重复规则 %s", cfg.Files[i].Name, kw.Term)
 			}
 			seen[ruleKey] = true
 			if kw.IsRegex {
 				re, err := regexp.Compile(kw.Term)
 				if err != nil {
-					log.Fatalf("正则错误: %s - %v", kw.Term, err)
+					return nil, fmt.Errorf("正则错误：%s - %w", kw.Term, err)
 				}
 				kw.regex = re
 			}
@@ -359,7 +395,7 @@ func loadConfig() *Config {
 		}
 		cfg.Files[i].Keywords = keywords
 	}
-	return &cfg
+	return &cfg, nil
 }
 
 func normalizeSeverity(value Severity, term, result string) Severity {
@@ -817,7 +853,7 @@ func generateReport(results []Result, cfg *Config, outputPath string, maxEntries
 	blockDevicesPath := writeStructuredHTML(reportDir, "lsblk.html", extractBlockDevicesRaw(results))
 	ruleVersion := cfg.Version
 	if strings.TrimSpace(ruleVersion) == "" {
-		ruleVersion = "内置规则 v1.0.0"
+		ruleVersion = "内置规则 v1.0.3"
 	}
 	diagnosticTargetID := diagnosticTarget(limitedResults, sysInfo)
 	if diagnosticTargetID == "" && (hasDiskFault(results, sysInfo) || hasFilesystemFault(results)) {

@@ -2,12 +2,36 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"html/template"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLoadExternalConfigStrictlyRejectsInvalidRules(t *testing.T) {
+	content, err := json.Marshal(Config{Version: "2026.08.13", Files: []FileConfig{{
+		Name: "syslog", Category: "系统日志", Keywords: []Keyword{
+			{Term: "duplicate", Result: "同一条", ContextDirection: "down", SearchDirection: "down"},
+			{Term: "duplicate", Result: "同一条", ContextDirection: "down", SearchDirection: "down"},
+		},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfigData(content, true); err == nil {
+		t.Fatal("外部规则存在重复项时应拒绝加载")
+	}
+}
+
+func TestLoadExternalConfigAcceptsValidRules(t *testing.T) {
+	content := []byte(`{"version":"2026.08.13","files":[{"name":"syslog","category":"系统日志","keywords":[{"term":"service failed","result":"服务启动失败","regex":false,"context_lines":2,"context_direction":"down","search_direction":"up"}]}]}`)
+	cfg, err := loadConfigData(content, true)
+	if err != nil || len(cfg.Files) != 1 || len(cfg.Files[0].Keywords) != 1 {
+		t.Fatalf("有效外部规则加载失败: cfg=%#v err=%v", cfg, err)
+	}
+}
 
 func TestParseSysInfo(t *testing.T) {
 	content := []byte(`{
@@ -217,6 +241,32 @@ func TestDashboardTemplateEscapesLogContent(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "<script>alert(1)</script>") {
 		t.Fatal("日志内容未进行 HTML 转义")
+	}
+}
+
+func TestDashboardTemplateDoesNotRenderRedundantHitPointBadge(t *testing.T) {
+	data := ReportData{
+		Results: []Result{{File: "x.log", GroupedIssues: []GroupedIssue{{Keyword: "I/O error.*sector", Message: "硬盘I/O错误，扇区异常", Severity: SeverityCritical, TotalCount: 2, ShowCount: 1, Issues: []Issue{{ContextLines: []ContextLine{{Number: 10, Text: "I/O error, sector 123", Hit: true}}}}}}}},
+	}
+	tmpl, err := template.New("report").Funcs(template.FuncMap{"split": strings.Split, "smartFocus": focusSmartAttributes, "smartRiskReminder": smartRiskReminder, "smartHasRisk": smartHasRisk}).Parse(dashboardReportTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := tmpl.Execute(&output, data); err != nil {
+		t.Fatal(err)
+	}
+	html := output.String()
+	if !strings.Contains(html, "2 次命中") {
+		t.Fatal("报告标题行未显示命中数量")
+	}
+	if strings.Contains(html, "2 个命中点") {
+		t.Fatal("报告不应重复显示命中点数量徽标")
+	}
+	for _, expected := range []string{"复制全部上下文", "I/O error, sector 123"} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("报告上下文区域未正常渲染: %s", expected)
+		}
 	}
 }
 
