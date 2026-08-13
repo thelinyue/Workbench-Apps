@@ -47,7 +47,7 @@ else {
 
 Push-Location $repoRoot
 try {
-    & $goExecutable build -trimpath -ldflags "-s -w" -o (Join-Path $stagingDirectory "rule_editor.exe") .
+    & $goExecutable build -trimpath -buildvcs=false -ldflags "-s -w" -o (Join-Path $stagingDirectory "rule_editor.exe") .
     if ($LASTEXITCODE -ne 0) { throw "Rule editor build failed with exit code $LASTEXITCODE." }
 }
 finally {
