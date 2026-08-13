@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "1.2.0",
     [string]$OutputDirectory = "plugin-release"
 )
 
@@ -33,27 +33,7 @@ if ($manifest.version -ne $Version) {
     throw "manifest.json version $($manifest.version) does not match build version $Version."
 }
 
-$goCommand = Get-Command go -ErrorAction SilentlyContinue
-if ($null -eq $goCommand) {
-    $userGo = Join-Path $env:LOCALAPPDATA "Programs\Go\bin\go.exe"
-    if (-not (Test-Path -LiteralPath $userGo)) {
-        throw "Go toolchain not found. Install Go or add go.exe to PATH."
-    }
-    $goExecutable = $userGo
-}
-else {
-    $goExecutable = $goCommand.Source
-}
-
-Push-Location $repoRoot
-try {
-    & $goExecutable build -trimpath -buildvcs=false -ldflags "-s -w" -o (Join-Path $stagingDirectory "rule_editor.exe") .
-    if ($LASTEXITCODE -ne 0) { throw "Rule editor build failed with exit code $LASTEXITCODE." }
-}
-finally {
-    Pop-Location
-}
-
+Copy-Item -LiteralPath (Join-Path $repoRoot "editor.html") -Destination $stagingDirectory
 Copy-Item -LiteralPath $manifestPath -Destination $stagingDirectory
 Copy-Item -LiteralPath (Join-Path $repoRoot "README.md") -Destination $stagingDirectory
 Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination $stagingDirectory

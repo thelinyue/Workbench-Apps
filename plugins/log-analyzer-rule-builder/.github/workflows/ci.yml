@@ -28,5 +28,9 @@ jobs:
         run: go test ./...
       - name: Vet
         run: go vet ./...
-      - name: Build Windows EXE
-        run: go build -trimpath -o rule_editor.exe .
+      - name: Validate Web plugin payload
+        shell: pwsh
+        run: |
+          $manifest = Get-Content manifest.json -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ($manifest.type -ne 'Web' -or $manifest.entry -ne 'editor.html') { throw 'manifest.json 必须声明 Web/editor.html。' }
+          if (-not (Test-Path -LiteralPath $manifest.entry)) { throw 'editor.html 不存在。' }
