@@ -24,7 +24,7 @@ func TestRunWritesSelfContainedReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(content)
-    for _, expected := range []string{"分析规则编辑器", "保存我的规则", "导出我的规则", "application/json"} {
+	for _, expected := range []string{"分析规则编辑器", "保存草稿", "导出我的规则", "application/json"} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("report.html 缺少 %q", expected)
 		}
@@ -50,6 +50,12 @@ func TestEditorIncludesReadOnlyOfficialRulesAndTemplates(t *testing.T) {
 		"getMaintainerSetupState",
 		"configureMaintainer",
 		"id=\"maintainerReleaseDialog\"",
+		"id=\"emptyFromOfficial\"",
+		"id=\"saveBottom\"",
+		"submitSelectedRules',{user:state.user}",
+		"localIds",
+		"submissionAvailable",
+		"diffSummary",
 		"setMaintainerToken",
 		"submitMaintainerRules",
 		"maintainerSetupDialog').classList.add('hidden')",
