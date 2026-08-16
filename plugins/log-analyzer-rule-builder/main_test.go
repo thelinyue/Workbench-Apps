@@ -39,18 +39,44 @@ func TestEditorIncludesReadOnlyOfficialRulesAndTemplates(t *testing.T) {
 	page := string(content)
 	for _, expected := range []string{
 		"id=\"officialList\"",
+		"id=\"officialResultSummary\"",
+		"id=\"clearOfficialFilters\"",
+		"id=\"officialCategoryList\"",
+		"id=\"addOfficialCategory\"",
+		"id=\"userCategoryList\"",
+		"id=\"addUserCategory\"",
 		"id=\"officialCategories\"",
 		"id=\"template\"",
 		"linux-error",
 		"hostInfo",
 		"主规则由维护者发布",
-		"event.ctrlKey",
+		"id=\"editorTitle\"",
+		"const maintainerClickLimit=10",
+		"maintainerClickCount>=maintainerClickLimit",
+		"onclick=handleMaintainerTitleClick",
 		"id=\"maintainerUnlockDialog\"",
 		"id=\"maintainerSetupDialog\"",
 		"getMaintainerSetupState",
 		"configureMaintainer",
 		"id=\"maintainerReleaseDialog\"",
 		"id=\"emptyFromOfficial\"",
+		"data-reference",
+		"data-detail",
+		"data-file-toggle",
+		"data-category-filter",
+		"data-category-add",
+		"data-user-category-filter",
+		"data-user-category-add",
+		"function openCategoryRule",
+		"id=\"categoryDialog\"",
+		"id=\"newCategoryName\"",
+		"function saveCategory",
+		"请先创建分类，再在分类下创建规则",
+		"categories:[]",
+		"official-details",
+		"按文字匹配",
+		"按规则表达式匹配",
+		"找到 ${matched} 条规则，分布在 ${visibleFiles} 个文件中",
 		"id=\"saveBottom\"",
 		"submitSelectedRules',{user:state.user}",
 		"localIds",
@@ -63,5 +89,8 @@ func TestEditorIncludesReadOnlyOfficialRulesAndTemplates(t *testing.T) {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("editor.html 缺少 %q", expected)
 		}
+	}
+	if strings.Contains(page, "event.ctrlKey") {
+		t.Fatal("维护者入口不应再依赖 Ctrl+Shift+Alt+R 快捷键")
 	}
 }
