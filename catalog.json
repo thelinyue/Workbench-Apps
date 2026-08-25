@@ -11,7 +11,7 @@
           "version": "1.0.0",
           "hostApiVersion": "1.0",
           "minWorkbenchVersion": "0.1.0",
-          "url": "https://github.com/thelinyue/Hephaestus-Workbench-Apps/releases/download/analysis-center-v1.0.0/analysis-center-v1.0.0.zip",
+          "url": "https://github.com/thelinyue/Workbench-Apps/releases/download/analysis-center-v1.0.0/analysis-center-v1.0.0.zip",
           "size": 98700,
           "sha256": "9fe626ac16782c6bd4d44d6804229a78d7ecaed452649feed9bee4019bcf7d3a",
           "signature": {
