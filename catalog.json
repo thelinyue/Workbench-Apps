@@ -20,6 +20,26 @@
           }
         }
       ]
+    },
+    {
+      "id": "lvm-uncache-tool",
+      "name": "LVM 缓存清理工具",
+      "description": "读取 LVM2 VG 文本备份，识别并清理缓存配置，生成可审阅的无缓存 VG 文件",
+      "publisherId": "thelinyue",
+      "releases": [
+        {
+          "version": "1.0.0",
+          "hostApiVersion": "1.0",
+          "minWorkbenchVersion": "0.1.0",
+          "url": "https://github.com/thelinyue/Workbench-Apps/releases/download/lvm-uncache-tool-v1.0.0/lvm-uncache-tool-v1.0.0.zip",
+          "size": 9626,
+          "sha256": "8906d3d83ddfa36613c8974b2a6bb6eeab42776e50553645003d3ae20707278f",
+          "signature": {
+            "keyId": "thelinyue-apps-ed25519-2026",
+            "signature": "PwJw7Bi+oFi06fnX7IVLysTi3dFnoUI9C3SSqBhtXw/8Wmc4UTNkv1ru1dW3jgY/MimskQXwfpmSWOUjHCVGAQ=="
+          }
+        }
+      ]
     }
   ]
 }
