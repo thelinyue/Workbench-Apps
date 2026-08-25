@@ -1,0 +1,12 @@
+{
+  "name": "@hephaestus-workbench/analysis-center",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hephaestus 工作台分析中心独立应用包",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "node ../../tools/build-analysis-center.mjs",
+    "test": "vitest run -c vitest.config.ts"
+  }
+}

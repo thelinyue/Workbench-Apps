@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none';">
+  <title>LVM 缓存清理工具</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Hephaestus Workbench 工具</p>
+        <h1>LVM 缓存清理工具</h1>
+        <p class="subtitle">读取 VG 文本，预览并清理 cache 配置。工具不会执行任何真实 LVM 命令。</p>
+      </div>
+      <div class="badge">本地处理 · 不联网</div>
+    </header>
+
+    <section class="card input-card">
+      <div class="section-heading">
+        <div>
+          <h2>1. 输入 VG 配置</h2>
+          <p>选择 backup/archive 中的 VG 文件，或直接粘贴文本。</p>
+        </div>
+        <label class="file-button">
+          选择 VG 文件
+          <input id="file-input" type="file" accept=".vg,.txt">
+        </label>
+      </div>
+      <div class="input-meta" id="input-meta">尚未选择文件</div>
+      <textarea id="input-text" spellcheck="false" placeholder="也可以直接粘贴 VG 配置文本"></textarea>
+      <div class="actions">
+        <button id="process-button" class="primary">解析并预览</button>
+        <button id="clear-button" class="secondary">清空</button>
+      </div>
+    </section>
+
+    <section class="summary-grid" aria-live="polite">
+      <div class="summary-card"><span>状态</span><strong id="status-value">等待输入</strong></div>
+      <div class="summary-card"><span>缓存 segment</span><strong id="segment-count">0</strong></div>
+      <div class="summary-card"><span>缓存 PV</span><strong id="pv-count">0</strong></div>
+      <div class="summary-card"><span>缓存 LV</span><strong id="lv-count">0</strong></div>
+    </section>
+
+    <section class="card details-card">
+      <div class="section-heading compact">
+        <div>
+          <h2>2. 识别结果</h2>
+          <p id="result-message">处理后会显示将要删除和转换的配置。</p>
+        </div>
+        <label class="overwrite-option">
+          <input id="overwrite-checkbox" type="checkbox">
+          允许覆盖已存在的输出文件
+        </label>
+      </div>
+      <div id="details" class="details-grid"></div>
+      <div id="warning" class="warning" hidden></div>
+    </section>
+
+    <section class="compare-grid">
+      <div class="card compare-card">
+        <div class="compare-heading"><h2>原始配置</h2><span id="original-lines">0 行</span></div>
+        <textarea id="original-text" readonly spellcheck="false"></textarea>
+      </div>
+      <div class="card compare-card">
+        <div class="compare-heading"><h2>清理后配置</h2><span id="processed-lines">0 行</span></div>
+        <textarea id="processed-text" readonly spellcheck="false"></textarea>
+      </div>
+    </section>
+
+    <section class="card save-card">
+      <div>
+        <h2>3. 保存结果</h2>
+        <p>默认建议文件名：<strong id="suggested-name">processed_nocache.vg</strong></p>
+      </div>
+      <button id="save-button" class="success" disabled>另存为清理结果</button>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
+
+
