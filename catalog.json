@@ -1,4 +1,25 @@
 {
   "schemaVersion": 1,
-  "apps": []
+  "apps": [
+    {
+      "id": "analysis-center",
+      "name": "分析中心",
+      "description": "诊断包导入、监控扫描、综合分析、存储健康分析和离线报告",
+      "publisherId": "thelinyue",
+      "releases": [
+        {
+          "version": "1.0.0",
+          "hostApiVersion": "1.0",
+          "minWorkbenchVersion": "0.1.0",
+          "url": "https://github.com/thelinyue/Hephaestus-Workbench-Apps/releases/download/analysis-center-v1.0.0/analysis-center-v1.0.0.zip",
+          "size": 98700,
+          "sha256": "9fe626ac16782c6bd4d44d6804229a78d7ecaed452649feed9bee4019bcf7d3a",
+          "signature": {
+            "keyId": "thelinyue-apps-ed25519-2026",
+            "signature": "7DLDMScD0Vtg26GVNMlX2ACDbUSXmy73afANJt5ZZSXPLrAXq18vnXoT4tD2wppTLH9wg0RXaZIV2s/SIaDmDw=="
+          }
+        }
+      ]
+    }
+  ]
 }
