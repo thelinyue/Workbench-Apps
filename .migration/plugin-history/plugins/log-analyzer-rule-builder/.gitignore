@@ -1,0 +1,6 @@
+# Go 构建缓存、测试输出和发布产物不进入源码仓库。
+.gocache/
+plugin-release/
+plugin-test-output/
+*.exe
+*.zip

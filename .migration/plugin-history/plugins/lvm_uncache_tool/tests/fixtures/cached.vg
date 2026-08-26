@@ -1,0 +1,45 @@
+contents = "Text Format Volume Group"
+version = 1
+
+test_vg {
+    extent_size = 8192
+
+    physical_volumes {
+        pv0 {
+            device = "/dev/test0"
+            tags = []
+        }
+        pv1 {
+            device = "/dev/test1"
+            tags = ["lvmcache"]
+        }
+    }
+
+    logical_volumes {
+        data {
+            segment_count = 1
+            segment1 {
+                start_extent = 0
+                extent_count = 100
+                type = "cache+CACHE_USES_CACHEVOL"
+                cache_pool = "cachepool"
+                origin = "origin"
+            }
+        }
+        cachepool {
+            flags = ["CACHE_VOL"]
+            segment_count = 1
+            segment1 {
+                type = "striped"
+                stripes = ["pv1", 0]
+            }
+        }
+        origin {
+            segment_count = 1
+            segment1 {
+                type = "striped"
+                stripes = ["pv0", 0]
+            }
+        }
+    }
+}
