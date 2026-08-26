@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 describe('分析中心独立应用包', () => {
   it('拥有独立版本和独立运行时入口', async () => {
     const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8')) as { id: string; version: string; runtime: { rendererEntry: string; backendEntry: string }; capabilities: string[] };
-    expect(manifest).toMatchObject({ id: 'analysis-center', version: '1.0.0', runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' } });
+    expect(manifest).toMatchObject({ id: 'analysis-center', version: '1.0.1', runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' } });
     expect(manifest.capabilities).toContain('file.open');
   });
 
