@@ -10,16 +10,17 @@
 
 ---
 
-### Task 1: 约束 `terminal` 的应用标识
+### Task 1: 统一 `terminal` 的源码和构建标识
 
 **Files:**
-- Modify: `D:/code/Workbench-Apps/apps/ssh-terminal/manifest.json`
-- Modify: `D:/code/Workbench-Apps/tools/build-ssh-terminal.mjs`
-- Modify: `D:/code/Workbench-Apps/tests-ssh-terminal-app.test.ts`
+- Move: `D:/code/Workbench-Apps/apps/ssh-terminal` to `D:/code/Workbench-Apps/apps/terminal`
+- Move: `D:/code/Workbench-Apps/tools/build-ssh-terminal.mjs` to `D:/code/Workbench-Apps/tools/build-terminal.mjs`
+- Move: `D:/code/Workbench-Apps/tests-ssh-terminal-app.test.ts` to `D:/code/Workbench-Apps/tests-terminal-app.test.ts`
+- Modify: `D:/code/Workbench-Apps/package.json`
 
 - [ ] **Step 1: 写出失败测试**
 
-在 `tests-ssh-terminal-app.test.ts` 增加断言，要求 manifest 的 ID 为 `terminal`，构建脚本的 ZIP 和 Release URL 均使用 `terminal-v1.0.0`。
+将现有测试迁移为 `tests-terminal-app.test.ts`，增加断言，要求 manifest 的 ID 为 `terminal`，构建脚本的 ZIP 和 Release URL 均使用 `terminal-v1.0.0`。
 
 ```ts
 expect(manifest.id).toBe('terminal');
@@ -29,24 +30,24 @@ expect(buildSource).toContain('/terminal-v${manifest.version}/terminal-v${manife
 
 - [ ] **Step 2: 验证测试失败**
 
-Run: `npx vitest run -c vitest.config.ts tests-ssh-terminal-app.test.ts`
+Run: `npx vitest run -c vitest.config.ts tests-terminal-app.test.ts`
 
 Expected: 失败，因为现有应用 ID 和 ZIP 名称仍是 `ssh-terminal`。
 
 - [ ] **Step 3: 最小实现**
 
-将 manifest 的 `id` 改为 `terminal`，构建脚本中 ZIP 名称和 Release URL 改为 `terminal-v${manifest.version}`；保留显示名 `SSH 终端`、能力和应用功能。
+使用 `git mv` 将应用目录和构建脚本改名为 `terminal`，将 manifest 的 `id` 改为 `terminal`，并将根 `package.json` 的构建、类型检查、测试命令改为 `terminal`。构建脚本中 ZIP 名称和 Release URL 改为 `terminal-v${manifest.version}`；保留显示名 `SSH 终端`、能力和应用功能。
 
 - [ ] **Step 4: 验证通过**
 
-Run: `npx vitest run -c vitest.config.ts tests-ssh-terminal-app.test.ts`
+Run: `npx vitest run -c vitest.config.ts tests-terminal-app.test.ts`
 
 Expected: PASS。
 
 - [ ] **Step 5: 提交**
 
 ```powershell
-git add apps/ssh-terminal/manifest.json tools/build-ssh-terminal.mjs tests-ssh-terminal-app.test.ts
+git add apps/terminal tools/build-terminal.mjs tests-terminal-app.test.ts package.json
 git commit -m "feat: publish terminal app"
 ```
 
@@ -54,38 +55,38 @@ git commit -m "feat: publish terminal app"
 
 **Files:**
 - Modify: `D:/code/Workbench-Apps/.github/workflows/release.yml`
-- Modify: `D:/code/Workbench-Apps/tests-ssh-terminal-app.test.ts`
+- Modify: `D:/code/Workbench-Apps/tests-terminal-app.test.ts`
 
 - [ ] **Step 1: 写出失败测试**
 
-增加 workflow 文本断言，要求监听 `terminal-v*` 并在构建分支执行 `npm run build:ssh-terminal`，同时不再声明 `ssh-terminal-v*`。
+增加 workflow 文本断言，要求监听 `terminal-v*` 并在构建分支执行 `npm run build:terminal`，同时不再声明 `ssh-terminal-v*`。
 
 ```ts
 expect(workflow).toContain("- 'terminal-v*'");
-expect(workflow).toContain('terminal) npm run build:ssh-terminal ;;');
+expect(workflow).toContain('terminal) npm run build:terminal ;;');
 expect(workflow).not.toContain("- 'ssh-terminal-v*'");
 ```
 
 - [ ] **Step 2: 验证测试失败**
 
-Run: `npx vitest run -c vitest.config.ts tests-ssh-terminal-app.test.ts`
+Run: `npx vitest run -c vitest.config.ts tests-terminal-app.test.ts`
 
 Expected: 失败，因为当前 workflow 只接受 `ssh-terminal-v*`。
 
 - [ ] **Step 3: 最小实现**
 
-在工作流标签列表中将 `ssh-terminal-v*` 改为 `terminal-v*`；在 `case` 中以 `terminal` 匹配并调用现有构建命令。保持 `permissions: contents: write`、`GH_TOKEN: ${{ github.token }}` 与签名 Secret 不变。
+在工作流标签列表中将 `ssh-terminal-v*` 改为 `terminal-v*`；在 `case` 中以 `terminal` 匹配并调用 `npm run build:terminal`。保持 `permissions: contents: write`、`GH_TOKEN: ${{ github.token }}` 与签名 Secret 不变。
 
 - [ ] **Step 4: 验证通过**
 
-Run: `npx vitest run -c vitest.config.ts tests-ssh-terminal-app.test.ts`
+Run: `npx vitest run -c vitest.config.ts tests-terminal-app.test.ts`
 
 Expected: PASS。
 
 - [ ] **Step 5: 提交**
 
 ```powershell
-git add .github/workflows/release.yml tests-ssh-terminal-app.test.ts
+git add .github/workflows/release.yml tests-terminal-app.test.ts
 git commit -m "ci: release terminal from apps repository"
 ```
 
@@ -96,9 +97,9 @@ git commit -m "ci: release terminal from apps repository"
 
 - [ ] **Step 1: 构建并校验 Release 元数据**
 
-Run: `npm run typecheck && npm test && npm run build:ssh-terminal`
+Run: `npm run typecheck && npm test && npm run build:terminal`
 
-Expected: 类型检查和测试通过；构建产物包含 `apps/ssh-terminal/dist/terminal-v1.0.0.zip` 与已签名的 `release.json`。
+Expected: 类型检查和测试通过；构建产物包含 `apps/terminal/dist/terminal-v1.0.0.zip` 与已签名的 `release.json`。
 
 - [ ] **Step 2: 推送主分支与发布标签**
 
