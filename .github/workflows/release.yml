@@ -5,7 +5,7 @@ on:
     tags:
       - 'analysis-center-v*'
       - 'lvm-uncache-tool-v*'
-      - 'ssh-terminal-v*'
+      - 'terminal-v*'
       - 'log-rule-editor-v*'
 
 permissions:
@@ -41,7 +41,7 @@ jobs:
           case "$app_id" in
             analysis-center) npm run build:analysis-center ;;
             lvm-uncache-tool) npm run build:lvm-uncache-tool ;;
-            ssh-terminal) npm run build:ssh-terminal ;;
+            terminal) npm run build:terminal ;;
             log-rule-editor) npm run build:log-rule-editor ;;
             *) echo "不支持的应用 Release 标签：$tag" >&2; exit 1 ;;
           esac
