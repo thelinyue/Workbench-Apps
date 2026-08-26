@@ -15,4 +15,13 @@ describe('LVM 缓存清理工具应用包', () => {
     expect(app).not.toMatch(/https?:\/\//);
     expect(app).toContain('host.saveFile');
   });
+
+  it('不在内容区重复渲染应用名称，并保留本地处理的安全提示', async () => {
+    const html = await readFile(resolve(process.cwd(), 'apps/lvm-uncache-tool/renderer/index.html'), 'utf8');
+
+    expect(html).not.toContain('<h1>LVM 缓存清理工具</h1>');
+    expect(html).not.toContain('class="hero"');
+    expect(html).toContain('仅解析文本，不执行真实 LVM 命令');
+    expect(html).toContain('本地处理 · 不联网');
+  });
 });

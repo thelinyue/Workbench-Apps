@@ -9,20 +9,12 @@
 </head>
 <body>
   <main class="shell">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">Workbench 工具</p>
-        <h1>LVM 缓存清理工具</h1>
-        <p class="subtitle">读取 VG 文本，预览并清理 cache 配置。工具不会执行任何真实 LVM 命令。</p>
-      </div>
-      <div class="badge">本地处理 · 不联网</div>
-    </header>
-
     <section class="card input-card">
       <div class="section-heading">
         <div>
           <h2>1. 输入 VG 配置</h2>
           <p>选择 backup/archive 中的 VG 文件，或直接粘贴文本。</p>
+          <p class="input-safety-note">仅解析文本，不执行真实 LVM 命令 · 本地处理 · 不联网</p>
         </div>
         <label class="file-button">
           选择 VG 文件
