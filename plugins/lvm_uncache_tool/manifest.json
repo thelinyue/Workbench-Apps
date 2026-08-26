@@ -1,0 +1,8 @@
+{
+  "id": "lvm-uncache-tool",
+  "name": "LVM 缓存清理工具",
+  "version": "1.0.0",
+  "type": "Web",
+  "entry": "index.html",
+  "capabilities": ["standalone-tool"]
+}
