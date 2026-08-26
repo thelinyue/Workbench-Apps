@@ -155,5 +155,8 @@ describe('统一应用发布配置', () => {
     expect(workflow).toContain('--clobber');
     expect(workflow).toContain('release_asset_name');
     expect(workflow).toContain('metadata_asset_name');
+    expect(workflow).toContain('metadata_path="apps/$app_id/dist/$metadata_asset_name"');
+    expect(workflow).toContain('cp "$release_path" "$metadata_path"');
+    expect(workflow).toContain('"$metadata_path" --clobber');
   });
 });

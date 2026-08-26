@@ -51,15 +51,17 @@ jobs:
             *) echo "不支持的应用 Release 标签：$tag" >&2; exit 1 ;;
           esac
           release_path="apps/$app_id/dist/release.json"
-          zip_path="apps/$app_id/dist/$app_id-v$version.zip"
           release_asset_name="$app_id-v$version.zip"
           metadata_asset_name="$app_id-v$version.release.json"
+          zip_path="apps/$app_id/dist/$release_asset_name"
+          metadata_path="apps/$app_id/dist/$metadata_asset_name"
           test -f "$release_path" && test -f "$zip_path"
           node -e "const r=require('./$release_path'); if(r.appId!=='$app_id'||r.version!=='$version'||!r.signature?.keyId||!r.signature.signature) process.exit(1)"
+          cp "$release_path" "$metadata_path"
           if ! gh release view "$unified_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$unified_tag" --target "$GITHUB_SHA" --title "Workbench Apps" --notes "Workbench 应用统一发布页。" --repo "$GITHUB_REPOSITORY"
           fi
-          gh release upload "$unified_tag" "$zip_path#$release_asset_name" "$release_path#$metadata_asset_name" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$unified_tag" "$zip_path" "$metadata_path" --clobber --repo "$GITHUB_REPOSITORY"
           node tools/update-app-catalog.mjs catalog.json "$release_path" "apps/$app_id/manifest.json"
           node tools/validate-catalog.mjs catalog.json
           git config user.name github-actions[bot]
