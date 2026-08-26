@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "ssh-terminal",
+  "name": "SSH 终端",
+  "description": "保存连接、使用密码或私钥安全登录远程主机，并在多标签终端中进行运维操作",
+  "publisherId": "thelinyue",
+  "version": "1.0.0",
+  "hostApiVersion": "1.0",
+  "minWorkbenchVersion": "0.1.0",
+  "runtime": {
+    "rendererEntry": "renderer/index.html",
+    "backendEntry": "backend/entry.js",
+    "icon": "renderer/icon.svg"
+  },
+  "capabilities": [
+    "ssh.credentials"
+  ]
+}
