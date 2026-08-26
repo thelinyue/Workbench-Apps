@@ -1,6 +1,6 @@
 # 两仓库迁移记录
 
-本仓库保存应用源码和应用独立发布资产。迁移过程使用 Git subtree 导入，完整历史已进入当前提交图；源码整理完成后不保留临时导入目录。
+本仓库保存应用源码和统一发布资产。迁移过程使用 Git subtree 导入，完整历史已进入当前提交图；源码整理完成后不保留临时导入目录。
 
 ## 历史映射
 
@@ -23,5 +23,5 @@
 - 历史插件 manifest 和历史目录协议不参与运行时；
 - 应用包统一使用 `AppManifestV1`；
 - 应用目录统一使用 `AppCatalogDocumentV1`；
-- 每个应用版本对应一个不可覆盖的 GitHub Release，ZIP、`release.json` 和 Ed25519 签名由 `release.yml` 生成；
+- 所有新应用版本共享固定的 `workbench-apps` GitHub Release，ZIP、唯一命名的元数据资产和 Ed25519 签名由 `release.yml` 生成；历史应用专属 Release 保留不迁移；
 - 规则编辑器的普通用户流程只调用 `rules.getRuleState`、`rules.validateUserRules`、`rules.saveUserRules`、`rules.submitSelectedRules` 和 `rules.exportRules`。

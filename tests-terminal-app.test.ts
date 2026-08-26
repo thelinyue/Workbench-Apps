@@ -20,8 +20,8 @@ describe('SSH 终端应用发布配置', () => {
       runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' },
       capabilities: ['ssh.credentials']
     });
-    expect(buildSource).toContain('terminal-v${manifest.version}.zip');
-    expect(buildSource).toContain('/terminal-v${manifest.version}/terminal-v${manifest.version}.zip');
+    expect(buildSource).toContain('getReleaseAssetName(manifest.id,manifest.version)');
+    expect(buildSource).toContain('getReleaseUrl(manifest.id,manifest.version)');
   });
 
   it('发布 1.0.2 并为 workbench-app 协议生成相对资源路径', () => {

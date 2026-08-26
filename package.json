@@ -2,7 +2,7 @@
   "name": "workbench-apps",
   "version": "0.1.0",
   "private": true,
-  "description": "Workbench 应用中心源码、构建和独立版本发布仓库",
+  "description": "Workbench 应用中心源码、构建和统一发布仓库",
   "scripts": {
     "typecheck": "npm run typecheck:analysis-center && npm run typecheck:terminal",
     "typecheck:analysis-center": "tsc --noEmit -p apps/analysis-center/tsconfig.json",

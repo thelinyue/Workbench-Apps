@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDeterministicZip } from './create-deterministic-zip.mjs';
+import { getReleaseAssetName, getReleaseUrl } from './release-config.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const appRoot = join(root, 'apps', 'log-rule-editor');
@@ -16,7 +17,7 @@ for (const file of ['manifest.json', 'README.md', 'LICENSE']) await copyFile(joi
 await copyFile(join(appRoot, 'renderer', 'index.html'), join(dist, 'renderer', 'index.html'));
 await copyFile(join(appRoot, 'renderer', 'icon.svg'), join(dist, 'renderer', 'icon.svg'));
 
-const zipPath = join(dist, `log-rule-editor-v${manifest.version}.zip`);
+const zipPath = join(dist, getReleaseAssetName(manifest.id, manifest.version));
 await createDeterministicZip(dist, zipPath);
 const bytes = await readFile(zipPath);
 const release = {
@@ -24,7 +25,7 @@ const release = {
   version: manifest.version,
   hostApiVersion: manifest.hostApiVersion,
   minWorkbenchVersion: manifest.minWorkbenchVersion,
-  url: `https://github.com/thelinyue/Workbench-Apps/releases/download/log-rule-editor-v${manifest.version}/log-rule-editor-v${manifest.version}.zip`,
+  url: getReleaseUrl(manifest.id, manifest.version),
   size: bytes.byteLength,
   sha256: createHash('sha256').update(bytes).digest('hex')
 };

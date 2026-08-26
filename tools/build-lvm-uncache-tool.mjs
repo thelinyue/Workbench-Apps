@@ -4,6 +4,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDeterministicZip } from './create-deterministic-zip.mjs';
+import { getReleaseAssetName, getReleaseUrl } from './release-config.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const appRoot = join(root, 'apps', 'lvm-uncache-tool');
@@ -18,7 +19,7 @@ await copyFile(manifestPath, join(dist, 'manifest.json'));
 await copyFile(join(appRoot, 'renderer', 'icon.svg'), join(dist, 'renderer', 'icon.svg'));
 await copyFile(join(appRoot, 'LICENSE'), join(dist, 'LICENSE'));
 
-const zipPath = join(dist, `lvm-uncache-tool-v${manifest.version}.zip`);
+const zipPath = join(dist, getReleaseAssetName(manifest.id, manifest.version));
 await createDeterministicZip(dist, zipPath);
 const bytes = await readFile(zipPath);
 const release = {
@@ -26,7 +27,7 @@ const release = {
   version: manifest.version,
   hostApiVersion: manifest.hostApiVersion,
   minWorkbenchVersion: manifest.minWorkbenchVersion,
-  url: `https://github.com/thelinyue/Workbench-Apps/releases/download/lvm-uncache-tool-v${manifest.version}/lvm-uncache-tool-v${manifest.version}.zip`,
+  url: getReleaseUrl(manifest.id, manifest.version),
   size: bytes.byteLength,
   sha256: createHash('sha256').update(bytes).digest('hex')
 };

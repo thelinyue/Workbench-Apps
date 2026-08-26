@@ -18,8 +18,7 @@ if (!item && manifestPath) {
   catalog.apps.push(item);
 }
 if (!item) throw new Error(`应用目录缺少 ${appId} 条目`);
-if (item.releases.some((candidate) => candidate.version === release.version)) throw new Error(`应用目录已存在版本：${appId}@${release.version}`);
-item.releases.push({
+const nextRelease = {
   version: release.version,
   hostApiVersion: release.hostApiVersion,
   minWorkbenchVersion: release.minWorkbenchVersion,
@@ -27,7 +26,14 @@ item.releases.push({
   size: release.size,
   sha256: release.sha256,
   signature: release.signature
-});
+};
+const existingIndex = item.releases.findIndex((candidate) => candidate.version === release.version);
+if (existingIndex >= 0) {
+  item.releases[existingIndex] = nextRelease;
+  console.log(`已替换应用目录版本：${appId}@${release.version}`);
+} else {
+  item.releases.push(nextRelease);
+  console.log(`已新增应用目录版本：${appId}@${release.version}`);
+}
 item.releases.sort((left, right) => left.version.localeCompare(right.version, undefined, { numeric: true }));
 await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
-console.log(`已更新应用目录：${appId}@${release.version}`);

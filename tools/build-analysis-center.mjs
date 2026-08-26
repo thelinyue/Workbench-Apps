@@ -4,6 +4,7 @@ import { access, copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDeterministicZip } from './create-deterministic-zip.mjs';
+import { getReleaseAssetName, getReleaseUrl } from './release-config.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const appRoot = join(root, 'apps', 'analysis-center');
@@ -19,7 +20,7 @@ await copyFile(manifestPath, join(dist, 'manifest.json'));
 await mkdir(join(dist, 'renderer'), { recursive: true });
 await copyFile(join(appRoot, 'renderer', 'icon.svg'), join(dist, 'renderer', 'icon.svg'));
 
-const zipPath = join(dist, `analysis-center-v${manifest.version}.zip`);
+const zipPath = join(dist, getReleaseAssetName(manifest.id, manifest.version));
 await createDeterministicZip(dist, zipPath);
 const bytes = await readFile(zipPath);
 const release = {
@@ -27,7 +28,7 @@ const release = {
   version: manifest.version,
   hostApiVersion: manifest.hostApiVersion,
   minWorkbenchVersion: manifest.minWorkbenchVersion,
-  url: `https://github.com/thelinyue/Workbench-Apps/releases/download/analysis-center-v${manifest.version}/analysis-center-v${manifest.version}.zip`,
+  url: getReleaseUrl(manifest.id, manifest.version),
   size: bytes.byteLength,
   sha256: createHash('sha256').update(bytes).digest('hex')
 };

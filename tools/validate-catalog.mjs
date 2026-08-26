@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { getReleaseUrl } from './release-config.mjs';
 
 const catalogPath = process.argv[2];
 if (!catalogPath) throw new Error('用法：node tools/validate-catalog.mjs <catalog.json>');
@@ -20,8 +21,9 @@ for (const app of catalog.apps) {
     if (versions.has(release.version)) throw new Error(`应用目录存在重复版本：${app.id}@${release.version}`);
     versions.add(release.version);
     if (!/^\d+\.\d+$/.test(release.hostApiVersion ?? '') || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release.minWorkbenchVersion ?? '')) throw new Error(`应用宿主兼容版本无效：${app.id}@${release.version}`);
-    const expectedUrl = `https://github.com/thelinyue/Workbench-Apps/releases/download/${app.id}-v${release.version}/${app.id}-v${release.version}.zip`;
-    if (release.url !== expectedUrl) throw new Error(`应用 Release 地址不符合约定：${app.id}@${release.version}`);
+    const legacyUrl = `https://github.com/thelinyue/Workbench-Apps/releases/download/${app.id}-v${release.version}/${app.id}-v${release.version}.zip`;
+    const unifiedUrl = getReleaseUrl(app.id, release.version);
+    if (release.url !== legacyUrl && release.url !== unifiedUrl) throw new Error(`应用 Release 地址不符合约定：${app.id}@${release.version}`);
     if (!Number.isInteger(release.size) || release.size <= 0 || release.size > 200 * 1024 * 1024) throw new Error(`应用 ZIP 大小无效：${app.id}@${release.version}`);
     if (!/^[0-9a-f]{64}$/i.test(release.sha256 ?? '')) throw new Error(`应用 ZIP SHA-256 无效：${app.id}@${release.version}`);
     if (!release.signature?.keyId || typeof release.signature.signature !== 'string') throw new Error(`应用 Release 缺少签名：${app.id}@${release.version}`);
