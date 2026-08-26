@@ -4,9 +4,9 @@
   "name": "分析中心",
   "description": "诊断包导入、监控扫描、综合分析、存储健康分析和离线报告",
   "publisherId": "thelinyue",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "hostApiVersion": "1.0",
-  "minWorkbenchVersion": "0.1.0",
+  "minWorkbenchVersion": "0.1.2",
   "runtime": {
     "rendererEntry": "renderer/index.html",
     "backendEntry": "backend/entry.js",
@@ -16,6 +16,7 @@
     "file.open",
     "shell.openPath",
     "shell.showItemInFolder",
-    "rules.read"
+    "rules.read",
+    "rules.update"
   ]
 }

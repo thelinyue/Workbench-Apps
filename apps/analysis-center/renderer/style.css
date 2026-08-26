@@ -1,30 +1,60 @@
 :root { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #172033; background: #f4faf8; }
 * { box-sizing: border-box; }
 body { margin: 0; }
-button, input, textarea { font: inherit; }
-button { padding: 8px 12px; border: 1px solid #b9d8d1; border-radius: 7px; color: #126e67; background: #fff; cursor: pointer; }
+button, input { font: inherit; }
+button { min-height: 36px; padding: 8px 12px; border: 1px solid #b9d8d1; border-radius: 7px; color: #126e67; background: #fff; cursor: pointer; }
 button:hover:not(:disabled) { background: #eaf7f3; }
+button:focus-visible, input:focus-visible { outline: 2px solid #16847a; outline-offset: 2px; }
 button:disabled { cursor: wait; opacity: .55; }
+h1, h2, p { margin: 0; }
 .analysis-app { min-height: 100vh; padding: 24px; }
-header, .summary, .content { display: flex; gap: 14px; }
-header { align-items: flex-start; justify-content: space-between; }
-header span { color: #16847a; font-size: 11px; font-weight: 700; letter-spacing: .12em; }
-h1, h2, p { margin: 0; } h1 { margin-top: 6px; } header p { margin-top: 6px; color: #64748b; font-size: 12px; }
-.actions, .card-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-.message { margin-top: 16px; padding: 10px 12px; border: 1px solid #b9d8d1; border-radius: 8px; color: #126e67; background: #eaf7f3; }
-.summary { margin-top: 22px; } .summary div { display: flex; min-width: 130px; padding: 12px 15px; flex-direction: column; gap: 3px; border: 1px solid #d4e7e2; border-radius: 10px; background: #fff; } .summary strong { font-size: 22px; } .summary span, small { color: #64748b; font-size: 11px; }
-.content { margin-top: 18px; align-items: flex-start; } .package-list, .settings, .tasks { padding: 15px; border: 1px solid #d4e7e2; border-radius: 10px; background: #fff; } .package-list { flex: 1; min-width: 0; } .settings { width: 280px; } .section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; } .section-title h2 { font-size: 15px; }
-.package-card { position: relative; display: flex; margin-top: 9px; padding: 11px; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #e3efec; border-radius: 8px; } .package-card > div:first-child { min-width: 0; } .package-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .package-card small { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.overflow-trigger { display: inline-grid; width: 34px; height: 34px; padding: 0; place-items: center; border-color: transparent; color: #64748b; background: transparent; }
-.overflow-trigger:hover, .overflow-trigger[aria-expanded='true'] { border-color: #b9d8d1; color: #126e67; background: #eaf7f3; }
+.message { margin-bottom: 16px; padding: 10px 12px; border: 1px solid #b9d8d1; border-radius: 8px; color: #126e67; background: #eaf7f3; }
+.package-list { min-width: 0; padding: 16px; border: 1px solid #d4e7e2; border-radius: 8px; background: #fff; }
+.analysis-list-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.analysis-list-heading span, .settings-heading span { color: #16847a; font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+.analysis-list-heading h1 { margin-top: 5px; font-size: 22px; }
+.analysis-list-heading p { margin-top: 4px; color: #64748b; font-size: 12px; }
+.analysis-list-actions, .card-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.package-card { position: relative; display: flex; margin-top: 10px; padding: 11px; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #e3efec; border-radius: 8px; }
+.package-card > div:first-child { min-width: 0; }
+.package-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.package-card small { display: block; margin-top: 4px; overflow: hidden; color: #64748b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.overflow-trigger, .icon-button { display: inline-grid; width: 36px; height: 36px; min-height: 36px; padding: 0; place-items: center; border-color: transparent; color: #64748b; background: transparent; }
+.overflow-trigger:hover, .overflow-trigger[aria-expanded='true'], .icon-button:hover:not(:disabled) { border-color: #b9d8d1; color: #126e67; background: #eaf7f3; }
 .overflow-menu { position: absolute; top: 48px; right: 10px; z-index: 5; width: 190px; padding: 6px; border: 1px solid #cfe3de; border-radius: 8px; box-shadow: 0 12px 28px rgba(22, 50, 79, .16); background: #fff; }
 .overflow-menu-title { padding: 7px 9px; overflow: hidden; color: #64748b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .overflow-menu button { display: flex; width: 100%; min-height: 34px; padding: 0 9px; align-items: center; gap: 8px; border-color: transparent; color: #172033; background: transparent; text-align: left; }
-.overflow-menu button:hover:not(:disabled) { border-color: #d4e7e2; background: #eaf7f3; }
-.overflow-menu button:disabled { cursor: not-allowed; }
 .overflow-menu .danger { color: #b42345; }
 .overflow-divider { height: 1px; margin: 5px 7px; background: #e3efec; }
-.danger { color: #b42345; border-color: #efb7c4; } .empty { padding: 55px 10px; color: #64748b; text-align: center; }
-.settings label { display: block; margin-top: 16px; color: #475569; font-size: 11px; } textarea, input { width: 100%; margin-top: 6px; padding: 7px; border: 1px solid #cfe3de; border-radius: 6px; } textarea { min-height: 90px; resize: vertical; } .settings button { margin-top: 14px; }
-.tasks { margin-top: 18px; } .task { display: grid; margin-top: 8px; padding: 8px 0; grid-template-columns: 110px 1fr 130px 60px; gap: 8px; align-items: center; border-top: 1px solid #e3efec; font-size: 11px; } progress { width: 100%; }
-@media (max-width: 820px) { header, .content { flex-direction: column; } .settings { width: auto; } .task { grid-template-columns: 1fr; } }
+.empty { padding: 70px 10px; color: #64748b; text-align: center; }
+.analysis-settings-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; padding: 24px; place-items: start end; background: rgba(23, 32, 51, .28); }
+.analysis-settings-popover { width: min(380px, 100%); max-height: calc(100vh - 48px); padding: 18px; overflow-y: auto; border: 1px solid #cfe3de; border-radius: 8px; box-shadow: 0 18px 44px rgba(22, 50, 79, .22); background: #fff; }
+.settings-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.settings-heading h2 { margin-top: 4px; font-size: 17px; }
+.analysis-settings-popover label, .settings-field { display: grid; margin-top: 18px; gap: 7px; color: #475569; font-size: 11px; }
+.analysis-settings-popover input { width: 100%; min-height: 36px; padding: 7px; border: 1px solid #cfe3de; border-radius: 6px; color: #172033; }
+.directory-list { display: grid; gap: 6px; }
+.directory-list > small { padding: 10px; border: 1px dashed #cfe3de; border-radius: 6px; color: #64748b; text-align: center; }
+.directory-item { display: flex; min-width: 0; min-height: 38px; padding: 4px 4px 4px 9px; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid #e3efec; border-radius: 6px; }
+.directory-item > span { min-width: 0; overflow: hidden; color: #172033; text-overflow: ellipsis; white-space: nowrap; }
+.directory-item .icon-button { width: 30px; height: 30px; min-height: 30px; flex: 0 0 30px; }
+.secondary-action, .rule-update button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.save-settings { width: 100%; margin-top: 16px; }
+.rule-update { display: grid; margin-top: 18px; padding-top: 14px; gap: 8px; border-top: 1px solid #e3efec; }
+.rule-update > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #475569; font-size: 11px; }
+.rule-update strong { max-width: 190px; overflow-wrap: anywhere; color: #172033; font-size: 12px; text-align: right; }
+.rule-update small { color: #475569; line-height: 1.5; overflow-wrap: anywhere; }
+.is-spinning { animation: rule-update-spin 1s linear infinite; }
+@keyframes rule-update-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .is-spinning { animation: none; } }
+@media (max-width: 680px) { .analysis-app { padding: 14px; } .analysis-list-heading, .package-card { align-items: stretch; flex-direction: column; } .analysis-list-actions, .card-actions { width: 100%; } .analysis-list-actions button, .card-actions > button { flex: 1; } .analysis-settings-backdrop { padding: 12px; place-items: start center; } .analysis-settings-popover { max-height: calc(100vh - 24px); } }
+
+/* 与单列表 renderer 对齐：列表承载完整主工作区，设置浮层不挤压诊断包内容。 */
+.analysis-list { min-width: 0; }
+.analysis-list > .package-list { margin-top: 12px; }
+.analysis-settings-popover { position: fixed; z-index: 20; top: 24px; right: 24px; }
+.directory-list { margin: 9px 0 0; padding: 0; list-style: none; }
+.directory-list li { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.directory-list code { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.directory-list button { flex: 0 0 auto; }
+@media (max-width: 680px) { .analysis-settings-popover { top: 12px; right: 12px; left: 12px; width: auto; } }
