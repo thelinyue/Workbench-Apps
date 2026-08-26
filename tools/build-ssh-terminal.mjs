@@ -1,0 +1,12 @@
+import { execFileSync } from 'node:child_process';
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash, createPrivateKey, sign } from 'node:crypto';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createDeterministicZip } from './create-deterministic-zip.mjs';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'), appRoot=join(root,'apps','ssh-terminal'), dist=join(appRoot,'dist'), manifest=JSON.parse(await readFile(join(appRoot,'manifest.json'),'utf8'));
+await rm(dist,{recursive:true,force:true});await mkdir(dist,{recursive:true});
+for(const config of ['vite.renderer.config.ts','vite.backend.config.ts']) execFileSync(process.execPath,[join(root,'node_modules','vite','bin','vite.js'),'build','--config',join(appRoot,config)],{cwd:root,stdio:'inherit'});
+await copyFile(join(appRoot,'manifest.json'),join(dist,'manifest.json'));await mkdir(join(dist,'renderer'),{recursive:true});await copyFile(join(appRoot,'renderer','icon.svg'),join(dist,'renderer','icon.svg'));
+for (const dependency of ['ssh2', 'asn1', 'bcrypt-pbkdf', 'tweetnacl']) await cp(join(root, 'node_modules', dependency), join(dist, 'node_modules', dependency), { recursive: true });
+const zip=join(dist,`ssh-terminal-v${manifest.version}.zip`);await createDeterministicZip(dist,zip);const bytes=await readFile(zip);const release={appId:manifest.id,version:manifest.version,hostApiVersion:manifest.hostApiVersion,minWorkbenchVersion:manifest.minWorkbenchVersion,url:`https://github.com/thelinyue/Workbench-Apps/releases/download/ssh-terminal-v${manifest.version}/ssh-terminal-v${manifest.version}.zip`,size:bytes.byteLength,sha256:createHash('sha256').update(bytes).digest('hex')};if(process.env.HEPHAESTUS_APP_SIGNING_PRIVATE_KEY&&process.env.HEPHAESTUS_APP_SIGNING_KEY_ID)release.signature={keyId:process.env.HEPHAESTUS_APP_SIGNING_KEY_ID,signature:sign(null,bytes,createPrivateKey(process.env.HEPHAESTUS_APP_SIGNING_PRIVATE_KEY)).toString('base64')};await writeFile(join(dist,'release.json'),JSON.stringify(release,null,2));

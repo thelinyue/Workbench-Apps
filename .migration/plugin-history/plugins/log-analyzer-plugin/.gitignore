@@ -1,6 +1,0 @@
-# 发布产物和本地构建文件不进入源码仓库。
-*.exe
-*.zip
-plugin-release/
-plugin-test-input/
-plugin-test-output/

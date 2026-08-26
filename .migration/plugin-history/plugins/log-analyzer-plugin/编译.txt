@@ -1,3 +1,0 @@
-go mod init log_analyzer
-go mod tidy
-go build -ldflags "-s -w" -o log_analyzer.exe

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "log-rule-editor",
+  "name": "分析规则编辑器",
+  "description": "维护分析中心的用户规则，支持校验、保存、提交和导出",
+  "publisherId": "thelinyue",
+  "version": "1.2.5",
+  "hostApiVersion": "1.0",
+  "minWorkbenchVersion": "0.1.0",
+  "runtime": {
+    "kind": "web",
+    "rendererEntry": "renderer/index.html",
+    "icon": "renderer/icon.svg"
+  },
+  "capabilities": ["rules.edit"]
+}

@@ -1,8 +1,0 @@
-{
-  "id": "log-rule-editor",
-  "name": "分析规则编辑器",
-  "version": "1.2.5",
-  "type": "Web",
-  "entry": "editor.html",
-  "capabilities": ["rule-editor"]
-}

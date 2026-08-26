@@ -1,8 +1,0 @@
-{
-  "name": "@hephaestus-workbench/lvm-uncache-tool",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "description": "Hephaestus 工作台 LVM 缓存清理工具独立应用包"
-}
-

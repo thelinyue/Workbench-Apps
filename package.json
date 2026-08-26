@@ -1,0 +1,45 @@
+{
+  "name": "workbench-apps",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workbench 应用中心源码、构建和独立版本发布仓库",
+  "scripts": {
+    "typecheck": "npm run typecheck:analysis-center && npm run typecheck:ssh-terminal",
+    "typecheck:analysis-center": "tsc --noEmit -p apps/analysis-center/tsconfig.json",
+    "typecheck:ssh-terminal": "tsc --noEmit -p apps/ssh-terminal/tsconfig.json",
+    "test": "npm run test:analysis-center && npm run test:lvm-uncache-tool && npm run test:ssh-terminal && npm run test:log-rule-editor && npm run test:root",
+    "test:analysis-center": "vitest run -c apps/analysis-center/vitest.config.ts",
+    "test:lvm-uncache-tool": "node --test apps/lvm-uncache-tool/tests/*.test.js",
+    "test:ssh-terminal": "vitest run -c apps/ssh-terminal/vitest.config.ts",
+    "test:log-rule-editor": "cd /d apps/log-rule-editor && go test ./...",
+    "test:root": "vitest run -c vitest.config.ts",
+    "build:analysis-center": "node tools/build-analysis-center.mjs",
+    "build:lvm-uncache-tool": "node tools/build-lvm-uncache-tool.mjs",
+    "build:ssh-terminal": "node tools/build-ssh-terminal.mjs",
+    "build:log-rule-editor": "node tools/build-log-rule-editor.mjs",
+    "build": "npm run build:analysis-center && npm run build:lvm-uncache-tool && npm run build:ssh-terminal && npm run build:log-rule-editor",
+    "validate:catalog": "node tools/validate-catalog.mjs catalog.json"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "extract-zip": "^2.0.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ssh2": "^1.17.0",
+    "tar": "^7.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@types/ssh2": "^1.15.5",
+    "@types/yazl": "^3.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5",
+    "yazl": "^3.3.1"
+  }
+}

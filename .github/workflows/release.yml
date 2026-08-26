@@ -1,0 +1,59 @@
+name: Workbench Apps Release
+
+on:
+  push:
+    tags:
+      - 'analysis-center-v*'
+      - 'lvm-uncache-tool-v*'
+      - 'ssh-terminal-v*'
+      - 'log-rule-editor-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建并发布应用
+        env:
+          HEPHAESTUS_APP_SIGNING_PRIVATE_KEY: ${{ secrets.WORKBENCH_APPS_SIGNING_PRIVATE_KEY }}
+          HEPHAESTUS_APP_SIGNING_KEY_ID: ${{ secrets.WORKBENCH_APPS_SIGNING_KEY_ID }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          app_id="${tag%-v*}"
+          version="${tag##*-v}"
+          case "$app_id" in
+            analysis-center) npm run build:analysis-center ;;
+            lvm-uncache-tool) npm run build:lvm-uncache-tool ;;
+            ssh-terminal) npm run build:ssh-terminal ;;
+            log-rule-editor) npm run build:log-rule-editor ;;
+            *) echo "不支持的应用 Release 标签：$tag" >&2; exit 1 ;;
+          esac
+          release_path="apps/$app_id/dist/release.json"
+          zip_path="apps/$app_id/dist/$app_id-v$version.zip"
+          test -f "$release_path" && test -f "$zip_path"
+          node -e "const r=require('./$release_path'); if(r.appId!=='$app_id'||r.version!=='$version'||!r.signature?.keyId||!r.signature.signature) process.exit(1)"
+          node tools/update-app-catalog.mjs catalog.json "$release_path" "apps/$app_id/manifest.json"
+          node tools/validate-catalog.mjs catalog.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add catalog.json
+          git diff --cached --quiet || git commit -m "chore: publish $app_id $version catalog entry"
+          git push origin HEAD:main
+          gh release create "$tag" "$zip_path" "$release_path" --title "$app_id $version" --notes "Workbench 应用独立版本发布。" --repo "$GITHUB_REPOSITORY" --verify-tag
