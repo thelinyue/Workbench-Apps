@@ -8,7 +8,7 @@
 
 - 分析中心版本标签：`analysis-center-vX.Y.Z`
 - LVM Uncache Tool 版本标签：`lvm-uncache-tool-vX.Y.Z`
-- SSH 终端版本标签：`ssh-terminal-vX.Y.Z`
+- SSH 终端版本标签：`terminal-vX.Y.Z`
 - 分析规则编辑器版本标签：`log-rule-editor-vX.Y.Z`
 - 目录更新必须经过工作台的严格 Catalog 校验
 - 已发布版本不可覆盖，修复必须递增版本号

@@ -5,7 +5,7 @@
 ```text
 analysis-center-vX.Y.Z
 lvm-uncache-tool-vX.Y.Z
-ssh-terminal-vX.Y.Z
+terminal-vX.Y.Z
 log-rule-editor-vX.Y.Z
 ```
 

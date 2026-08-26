@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('SSH 终端应用发布配置', () => {
@@ -23,14 +24,30 @@ describe('SSH 终端应用发布配置', () => {
     expect(buildSource).toContain('/terminal-v${manifest.version}/terminal-v${manifest.version}.zip');
   });
 
-  it('发布 1.0.1 并为 workbench-app 协议生成相对资源路径', () => {
+  it('发布 1.0.2 并为 workbench-app 协议生成相对资源路径', () => {
     execFileSync(process.execPath, ['tools/build-terminal.mjs'], { cwd: process.cwd(), stdio: 'pipe' });
 
     const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'apps/terminal/manifest.json'), 'utf8'));
     const entry = readFileSync(resolve(process.cwd(), 'apps/terminal/dist/renderer/index.html'), 'utf8');
-    expect(manifest.version).toBe('1.0.1');
+    expect(manifest.version).toBe('1.0.2');
     expect(entry).toMatch(/(?:src|href)="\.\.\/assets\//);
     expect(entry).not.toMatch(/(?:src|href)="\/assets\//);
+  });
+
+  it('在隔离安装目录中加载 SSH 后端所需的全部运行时依赖', () => {
+    execFileSync(process.execPath, ['tools/build-terminal.mjs'], { cwd: process.cwd(), stdio: 'pipe' });
+
+    const distPath = resolve(process.cwd(), 'apps/terminal/dist');
+    const isolatedRoot = mkdtempSync(join(tmpdir(), 'workbench-terminal-package-'));
+
+    try {
+      expect(existsSync(join(distPath, 'node_modules', 'safer-buffer', 'safer.js'))).toBe(true);
+      cpSync(distPath, isolatedRoot, { recursive: true });
+
+      expect(() => execFileSync(process.execPath, ['-e', 'require(process.argv[1])', join(isolatedRoot, 'backend', 'entry.js')], { cwd: isolatedRoot, stdio: 'pipe' })).not.toThrow();
+    } finally {
+      rmSync(isolatedRoot, { recursive: true, force: true });
+    }
   });
 
   it('由 Apps 仓库的 terminal 标签触发发布', () => {
