@@ -21,5 +21,7 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
 
   expect(result.result.diagnoses[0]).toMatchObject({ id: 'storage.device.suspected_failure', primaryResource: '/dev/sdc' });
   expect(result.browserPath).toContain('analysis-result.html');
-  expect(await readFile(result.browserPath, 'utf8')).toContain('硬盘 3（序列号：SERIAL-003，用于：存储池 3）的健康检测发现异常，同时记录到 I/O 读写错误，判断该硬盘已出现故障');
+  const html = await readFile(result.browserPath, 'utf8');
+  expect(html).toContain('硬盘 3（序列号：SERIAL-003）：检测到多次读写错误（I/O Error）；硬盘健康信息存在异常。');
+  expect(html).toContain('white-space:pre-line');
 });

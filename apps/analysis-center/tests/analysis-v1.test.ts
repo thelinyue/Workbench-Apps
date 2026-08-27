@@ -100,6 +100,94 @@ describe('V1 统一诊断分析', () => {
     ]));
   });
 
+  it('先列出异常硬盘，再提示关联 RAID 0 的无冗余风险', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'raid0-disk-risk.tgz',
+      files: {
+        'mdstat.log': 'md0 : active raid0 sda1[0] sdb1[1]\n      100 blocks [2/2] [UU]',
+        'sysinfo.json': JSON.stringify({ disk: { devices: [
+          { disk_info: { dev_name: '/dev/sda', label: 'Hard Drive 2', serial: 'SERIAL-002' }, smart_info: { report: [{ id: 5, name: 'Reallocated_Sector_Ct', raw: 2 }] } },
+          { disk_info: { dev_name: '/dev/sdb', label: 'Hard Drive 3', serial: 'SERIAL-003' }, smart_info: { report: [{ id: 197, name: 'Current_Pending_Sector', raw: 1 }] } }
+        ] } })
+      }
+    });
+
+    const reply = result.diagnoses.find((item) => item.id === 'storage.multiple_devices.failure_suspected')?.userConclusion;
+    expect(reply).toContain('发现 2 块硬盘存在异常');
+    expect(reply).toContain('硬盘 2（序列号：SERIAL-002）：硬盘健康信息存在异常。');
+    expect(reply).toContain('硬盘 3（序列号：SERIAL-003）：硬盘健康信息存在异常。');
+    expect(reply).toContain('RAID 0 无冗余，一块硬盘故障可能导致整个阵列数据不可用，请立即备份数据。');
+    expect(reply!.indexOf('硬盘 3')).toBeLessThan(reply!.indexOf('RAID 0'));
+  });
+
+  it.each([
+    ['raid1', 'RAID 1 已降级，当前冗余降低，请尽快备份并更换故障硬盘。'],
+    ['raid5', 'RAID 5 已失去冗余，再有一块硬盘故障可能导致数据不可用，请立即备份。'],
+    ['raid6', 'RAID 6 冗余能力已降低，请尽快备份并更换故障硬盘。'],
+    ['raid10', 'RAID 10 已降级，请尽快备份并更换故障硬盘。'],
+    ['linear', 'JBOD 无冗余，故障硬盘上的数据可能无法访问，请立即备份数据。']
+  ])('为 %s 阵列生成对应的用户风险提示', (level, expected) => {
+    const result = analyzeV1Sources({
+      sourceName: `${level}-disk-risk.tgz`,
+      files: {
+        'mdstat.log': `md0 : active ${level} sda1[0] sdb1[1]\n      100 blocks [2/1] [U_]`,
+        'sysinfo.json': JSON.stringify({ disk: { devices: [
+          { disk_info: { dev_name: '/dev/sda', label: 'Hard Drive 1', serial: 'SERIAL-001' }, smart_info: { report: [{ id: 5, name: 'Reallocated_Sector_Ct', raw: 2 }] } }
+        ] } })
+      }
+    });
+
+    expect(result.diagnoses.find((item) => item.primaryResource === '/dev/sda')?.userConclusion).toContain(expected);
+  });
+
+  it('在硬盘 SMART 正常且存储池文件系统错误时提示远程修复', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'filesystem-repair.tgz',
+      files: {
+        'mdstat.log': 'md0 : active raid1 sda1[0] sdb1[1]\n      100 blocks [2/2] [UU]',
+        'ugvolume.log': "pool[pool1] /dev/md0 assemble by 2 disks\npool1-volume mntPath:/volume1\npool1-volume can't read superblock",
+        'sysinfo.json': JSON.stringify({ disk: { devices: [
+          { disk_info: { dev_name: '/dev/sda' }, smart_info: { report: [] } },
+          { disk_info: { dev_name: '/dev/sdb' }, smart_info: { report: [] } }
+        ] } })
+      }
+    });
+
+    expect(result.diagnoses).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: 'filesystem.storage.repair',
+      userConclusion: '您好，经分析诊断日志，当前硬盘健康信息正常，但存储池下的存储空间文件系统存在异常，需要给您修复文件系统。'
+    })]));
+  });
+
+  it('仅在明确掉盘日志出现时提示关机后重新插拔或换槽', () => {
+    const unavailable = analyzeV1Sources({
+      sourceName: 'device-unavailable.tgz',
+      files: { 'kern.log': 'ata1: SATA link down (SStatus 0 SControl 300)' }
+    });
+    const timeout = analyzeV1Sources({
+      sourceName: 'device-timeout.tgz',
+      files: { 'kern.log': 'sd 0:0:0:0: timing out command, dev sda' }
+    });
+
+    expect(unavailable.diagnoses).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: 'storage.device.unrecognized',
+      userConclusion: '您好，经分析诊断日志，硬盘当前未被系统识别，可能存在硬盘接触或槽位异常。请先关机后重新插拔硬盘，或更换其他硬盘槽位接入后再观察。'
+    })]));
+    expect(timeout.diagnoses).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'storage.device.unrecognized' })]));
+  });
+
+  it('掉盘日志可定位硬盘时在用户话术中带出硬盘名称', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'identified-device-unavailable.tgz',
+      files: {
+        'kern.log': 'sda: link is down',
+        'sysinfo.json': JSON.stringify({ disk: { devices: [{ disk_info: { dev_name: '/dev/sda', label: 'Hard Drive 4' }, smart_info: { report: [] } }] } })
+      }
+    });
+
+    expect(result.diagnoses.find((item) => item.id === 'storage.device.unrecognized')?.userConclusion).toContain('硬盘 4 当前未被系统识别');
+  });
+
   it('把 sysinfo 硬盘身份写入结果，并生成可发送给用户和工程师的结论', () => {
     const result = analyzeV1Sources({
       sourceName: 'identified-disk-risk.tgz',
@@ -124,7 +212,7 @@ describe('V1 统一诊断分析', () => {
     expect(result.diagnoses).toEqual(expect.arrayContaining([expect.objectContaining({
       id: 'storage.device.suspected_failure',
       affectedDeviceResources: ['/dev/sda'],
-      userConclusion: expect.stringContaining('硬盘 1（序列号：SERIAL-001，用于：存储池 1）的健康检测发现异常，同时记录到 I/O 读写错误，判断该硬盘已出现故障'),
+      userConclusion: expect.stringContaining('硬盘 1（序列号：SERIAL-001）：检测到多次读写错误（I/O Error）；硬盘健康信息存在异常。'),
       engineerConclusion: expect.stringContaining('SMART 05 原始值 2')
     })]));
   });

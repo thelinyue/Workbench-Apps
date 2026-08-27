@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "eventRules": [
     {"id":"storage.io.blk_update","sources":["kernel"],"regex":"blk_update_request: I/O error, dev (?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
     {"id":"storage.io.buffer","sources":["kernel"],"regex":"Buffer I/O error on dev (?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
@@ -8,6 +8,8 @@
     {"id":"storage.timeout","sources":["kernel"],"regex":"(?:timed out|timeout).*?(?:dev |on )(?<device>[a-zA-Z0-9]+)","type":"storage.timeout"},
     {"id":"storage.device_reset","sources":["kernel"],"regex":"(?:reset controller|Device not ready|hard resetting)","type":"storage.device_reset"},
     {"id":"storage.ata.error","sources":["kernel"],"regex":"ata\\d+.*(?:error|failed)","type":"storage.ata_error"},
+    {"id":"storage.device.unrecognized.named","sources":["kernel"],"regex":"(?<device>(?:sd[a-z]+|nvme\\d+n\\d+)).*(?:link is down|failed to IDENTIFY|failed to identify|not recognized|not found)","type":"storage.device_unrecognized"},
+    {"id":"storage.device.unrecognized","sources":["kernel"],"regex":"(?:SATA link down|link is down|failed to IDENTIFY|failed to identify|Device not ready)","type":"storage.device_unrecognized"},
     {"id":"storage.scsi.medium","sources":["kernel"],"regex":"(?:medium error|uncorrectable)","type":"storage.media_error"},
     {"id":"storage.nvme.error","sources":["kernel"],"regex":"nvme.*(?:I/O Error|error)","type":"storage.nvme_error"},
     {"id":"system.kernel.panic","sources":["kernel"],"regex":"Kernel panic","type":"system.kernel_panic"},

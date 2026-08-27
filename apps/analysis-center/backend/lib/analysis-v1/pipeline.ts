@@ -15,6 +15,7 @@ export interface Diagnosis { id: string; category: string; severity: Severity; c
 export interface AnalysisResult { schemaVersion: 1; id: string; status: 'completed' | 'partial'; summary: { criticalCount: number; warningCount: number; infoCount: number; primaryDiagnosisId?: string; complete: boolean }; diagnoses: Diagnosis[]; findings: Finding[]; evidence: Evidence[]; deviceAssessments: DeviceAssessment[]; recommendations: Recommendation[]; metadata: { source: string; startTime: string; completeTime: string; duration: number; processedFiles: number; processedLines: number; processedEvents: number; analyzerVersion: string; rulePackVersion: string; missingData: string[] }; }
 
 interface DeviceIdentity { resource: string; label?: string; model?: string; serial?: string; slot?: string; usedFor?: string; }
+interface RaidAssessment { resource: string; level?: string; expectedMembers?: number; activeMembers?: number; degraded: boolean; }
 
 const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume'])), regex: z.string(), type: z.string() })) });
 const rulePack = rulePackSchema.parse(rulePackJson);
@@ -26,6 +27,7 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   const events: NormalizedEvent[] = [];
   const topology = new Map<string, string[]>();
   const deviceArrays = new Map<string, string[]>();
+  const raidAssessments = new Map<string, RaidAssessment>();
   const deviceIdentities = new Map<string, DeviceIdentity>();
   let processedLines = 0;
   let evidenceNumber = 0;
@@ -42,12 +44,14 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
     if (source === 'sysinfo') parseSysinfo(content, sourceFile, add, deviceIdentities);
     else {
       const lines = content.split(/\r?\n/);
+      const mdstatContext: { currentArray?: string } = {};
       processedLines += lines.length;
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index];
         const emittedTypes = new Set<string>();
         for (const rule of rulePack.eventRules) {
           if (!rule.sources.includes(source)) continue;
+          if (source === 'mdstat' && rule.type === 'raid.degraded') continue;
           const match = new RegExp(rule.regex, 'i').exec(line);
           if (!match || emittedTypes.has(rule.type)) continue;
           const device = match.groups?.device;
@@ -55,7 +59,7 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
           add(rule.id, rule.type, sourceFile, line, index + 1, resource);
           emittedTypes.add(rule.type);
         }
-        if (source === 'mdstat') parseMdstatLine(line, sourceFile, index + 1, add, deviceArrays);
+        if (source === 'mdstat') parseMdstatLine(line, sourceFile, index + 1, add, deviceArrays, raidAssessments, mdstatContext);
         if (source === 'ugvolume') parseTopology(line, topology);
       }
     }
@@ -66,7 +70,7 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   }
   const findings = aggregateFindings(events, evidence, topology);
   const deviceAssessments = buildDeviceAssessments(deviceIdentities, events);
-  const { diagnoses, recommendations } = composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments);
+  const { diagnoses, recommendations } = composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments);
   const missingData = ['sysinfo', 'mdstat'].filter((source) => !Object.keys(input.files).some((file) => classify(file) === source));
   const ended = new Date();
   const criticalCount = diagnoses.filter((item) => item.severity === 'critical').length;
@@ -131,7 +135,29 @@ function buildDeviceAssessments(deviceIdentities: Map<string, DeviceIdentity>, e
     return { ...identity, smartRiskAttributes, ioErrorCount: events.filter((event) => event.type === 'storage.io_error' && event.resource === resource).length };
   });
 }
-function parseMdstatLine(line: string, file: string, lineNumber: number, add: (ruleId: string, type: string, sourceFile: string, line: string, lineNumber: number | undefined, resource?: string, attributes?: Record<string, string | number>) => void, deviceArrays: Map<string, string[]>): void { const array = line.match(/^(md\d+)\s*:/); if (array) for (const member of line.matchAll(/\b(sd[a-z]+|nvme\d+n\d+)\d*\[\d+\]/g)) { const device = `/dev/${member[1]}`; deviceArrays.set(device, [...new Set([...(deviceArrays.get(device) ?? []), array[1]])]); } if (array && /\bbroken\b/i.test(line)) add('raid.array.broken', 'raid.degraded', file, line, lineNumber, array[1]); for (const member of line.matchAll(/\b(sd[a-z]+|nvme\d+n\d+)\d*\[\d+\]\(F\)/g)) add('raid.member.failed', 'raid.member_failed', file, line, lineNumber, `/dev/${member[1]}`); if (/\[\d+\/\d+\]\s+\[[U_]+\]/.test(line)) { const resource = array?.[1]; if (resource && line.includes('_')) add('raid.array.degraded', 'raid.degraded', file, line, lineNumber, resource); } }
+/** 解析 mdstat 的多行阵列块，成员计数只来自同一块中的 [期望/在线] 状态。 */
+function parseMdstatLine(line: string, file: string, lineNumber: number, add: (ruleId: string, type: string, sourceFile: string, line: string, lineNumber: number | undefined, resource?: string, attributes?: Record<string, string | number>) => void, deviceArrays: Map<string, string[]>, raidAssessments: Map<string, RaidAssessment>, context: { currentArray?: string }): void {
+  const header = line.match(/^\s*(md\d+)\s*:\s*\w+\s+(\S+)/i);
+  if (header) {
+    const resource = header[1];
+    context.currentArray = resource;
+    raidAssessments.set(resource, { resource, level: header[2], degraded: /\bbroken\b/i.test(line) });
+    for (const member of line.matchAll(/\b(sd[a-z]+|nvme\d+n\d+)\d*\[\d+\](\(F\))?/g)) {
+      const device = `/dev/${member[1]}`;
+      deviceArrays.set(device, [...new Set([...(deviceArrays.get(device) ?? []), resource])]);
+      if (member[2]) add('raid.member.failed', 'raid.member_failed', file, line, lineNumber, device);
+    }
+    if (/\bbroken\b/i.test(line)) add('raid.array.broken', 'raid.degraded', file, line, lineNumber, resource);
+  }
+  const status = line.match(/\[(\d+)\/(\d+)\]\s+\[([U_]+)\]/);
+  if (!status || !context.currentArray) return;
+  const assessment = raidAssessments.get(context.currentArray);
+  if (!assessment) return;
+  assessment.expectedMembers = Number(status[1]);
+  assessment.activeMembers = Number(status[2]);
+  assessment.degraded ||= assessment.activeMembers < assessment.expectedMembers || status[3].includes('_');
+  if (assessment.degraded) add('raid.array.degraded', 'raid.degraded', file, line, lineNumber, assessment.resource);
+}
 function parseTopology(line: string, topology: Map<string, string[]>): void { const match = line.match(/pool\[([^\]]+)\].*\/dev\/(md\d+)/i); if (match) topology.set(match[2], [...new Set([...(topology.get(match[2]) ?? []), match[1]])]); const mount = line.match(/pool(\d+)-[^,\s]+.*mntPath:?(\/volume\d+)/i); if (mount) { const pool = `pool${mount[1]}`; topology.set(pool, [...new Set([...(topology.get(pool) ?? []), mount[2]])]); } }
 function poolFromMountLine(line: string): string | undefined { const match = line.match(/pool(\d+)-/i); return match ? `pool${match[1]}` : undefined; }
 function aggregateFindings(events: NormalizedEvent[], evidence: Evidence[], topology: Map<string, string[]>): Finding[] { const groups = new Map<string, NormalizedEvent[]>(); for (const event of events) { const key = `${event.type}:${event.resource ?? 'system'}`; groups.set(key, [...(groups.get(key) ?? []), event]); } return [...groups.entries()].map(([key, grouped]) => { const event = grouped[0]; const resource = event.resource; const extra = resource ? topology.get(resource) ?? [] : []; const title = titleFor(event.type, resource); return { id: key, type: event.type, category: event.type.split('.')[0], severity: severityFor(event.type), confidence: event.type.startsWith('raid.') ? 'confirmed' : event.type === 'storage.smart_risk' ? 'high' : 'medium', title, summary: `${title}，共 ${grouped.length} 次。`, affectedResources: [...new Set([...(resource ? [resource] : []), ...extra])], evidenceIds: grouped.map((item) => item.evidenceId), firstSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort()[0], lastSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort().at(-1), occurrenceCount: grouped.length }; }); }
@@ -139,13 +165,29 @@ function titleFor(type: string, resource?: string): string { const names: Record
 function severityFor(type: string): Severity { return type.startsWith('raid.') || type === 'system.kernel_panic' || type === 'system.watchdog' ? 'critical' : type.startsWith('storage.') || type.startsWith('filesystem.') || type.startsWith('system.') ? 'warning' : 'info'; }
 function localizeDeviceLabel(label: string | undefined, resource: string): string { if (!label) return resource; const m2 = label.match(/^M\.2\s+Hard Drive\s+(\d+)$/i); if (m2) return `M.2 硬盘 ${m2[1]}`; const disk = label.match(/^Hard Drive\s+(\d+)$/i); return disk ? `硬盘 ${disk[1]}` : label; }
 function localizeUsage(usage: string | undefined): string { return usage?.replace(/^Storage Pool\s+(\d+)$/i, '存储池 $1') ?? '日志未提供'; }
-/** 用户结论避免暴露 SMART 等术语，只陈述日志可证实的硬盘健康异常和读写异常。 */
-function buildUserConclusion(devices: DeviceAssessment[]): string {
-  const statements = devices.map((device) => {
-    const identity = `${localizeDeviceLabel(device.label, device.resource)}（序列号：${device.serial ?? '日志未提供'}，用于：${localizeUsage(device.usedFor)}）`;
-    return `${identity}的健康检测发现异常${device.ioErrorCount > 0 ? '，同时记录到 I/O 读写错误' : ''}，判断该硬盘已出现故障`;
+/** 用户结论只转换已确认的设备、阵列事实，不让用户重复执行已经完成的诊断检查。 */
+function buildUserConclusion(devices: DeviceAssessment[], deviceArrays: Map<string, string[]>, raidAssessments: Map<string, RaidAssessment>): string {
+  const deviceLines = devices.map((device) => {
+    const facts = [device.ioErrorCount > 0 ? '检测到多次读写错误（I/O Error）' : '', device.smartRiskAttributes.length ? '硬盘健康信息存在异常' : ''].filter(Boolean);
+    return `${localizeDeviceLabel(device.label, device.resource)}（序列号：${device.serial ?? '日志未提供'}）：${facts.join('；')}。`;
   });
-  return `您好，根据您提供的诊断日志，${statements.join('；')}。`;
+  const arrays = [...new Set(devices.flatMap((device) => deviceArrays.get(device.resource) ?? []))];
+  const raidLines = arrays.map((array) => raidRiskMessage(raidAssessments.get(array))).filter((value): value is string => Boolean(value));
+  const conclusion = devices.length === 1 ? '该硬盘存在较高故障风险。' : '以上硬盘均存在较高故障风险。';
+  return ['您好，经分析诊断日志，发现 ' + `${devices.length} 块硬盘存在异常：`, deviceLines.join('\n'), raidLines.join('\n'), `综合当前日志信息，${conclusion}建议您尽快备份存储池中的重要数据，并及时更换异常硬盘。`].filter(Boolean).join('\n\n');
+}
+
+/** RAID 10 的多盘容错依赖镜像组位置，因此仅说明降级事实，不按成员数量承诺数据安全。 */
+function raidRiskMessage(raid: RaidAssessment | undefined): string | undefined {
+  if (!raid?.level) return undefined;
+  const level = raid.level.toLowerCase();
+  if (level === 'raid0') return 'RAID 0 无冗余，一块硬盘故障可能导致整个阵列数据不可用，请立即备份数据。';
+  if (level === 'linear' || level === 'jbod') return 'JBOD 无冗余，故障硬盘上的数据可能无法访问，请立即备份数据。';
+  if (level === 'raid1') return 'RAID 1 已降级，当前冗余降低，请尽快备份并更换故障硬盘。';
+  if (level === 'raid5') return 'RAID 5 已失去冗余，再有一块硬盘故障可能导致数据不可用，请立即备份。';
+  if (level === 'raid6') return 'RAID 6 冗余能力已降低，请尽快备份并更换故障硬盘。';
+  if (level === 'raid10') return 'RAID 10 已降级，请尽快备份并更换故障硬盘。';
+  return undefined;
 }
 /** 工程师结论保留原始属性和拓扑事实，明确不将时间关联写成未经证实的因果。 */
 function buildEngineerConclusion(devices: DeviceAssessment[], arrays: string[] = [], pools: string[] = []): string {
@@ -161,12 +203,13 @@ function buildEngineerConclusion(devices: DeviceAssessment[], arrays: string[] =
  * 诊断层只提升已经由 Finding 证实的事实：SMART 快照本身可定位设备；多设备同时异常提高整体风险，
  * 但不会据此推断 RAID 或文件系统的因果关系。
  */
-function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topology: Map<string, string[]>, deviceArrays: Map<string, string[]>, deviceAssessments: DeviceAssessment[]): { diagnoses: Diagnosis[]; recommendations: Recommendation[] } {
+function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topology: Map<string, string[]>, deviceArrays: Map<string, string[]>, deviceAssessments: DeviceAssessment[], raidAssessments: Map<string, RaidAssessment>): { diagnoses: Diagnosis[]; recommendations: Recommendation[] } {
   const diagnoses: Diagnosis[] = [];
   const recommendations: Recommendation[] = [];
   const deviceByResource = new Map(deviceAssessments.map((device) => [device.resource, device]));
   const resources = new Set(findings.flatMap((finding) => finding.affectedResources.filter((resource) => resource.startsWith('/dev/'))));
   const smartDevices = [...resources].filter((device) => findings.some((finding) => finding.type === 'storage.smart_risk' && finding.affectedResources.includes(device)));
+  const userConclusion = (devices: DeviceAssessment[]) => buildUserConclusion(devices, deviceArrays, raidAssessments);
   const ensureSmartRecommendation = (device: string): string => {
     const id = `recommendation.smart:${device}`;
     if (!recommendations.some((item) => item.id === id)) recommendations.push({ id, priority: 1, type: 'inspection', title: `检查 ${device} SMART`, reason: '确认磁盘介质错误及健康状态。', risk: 'safe' });
@@ -182,7 +225,7 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
       affectedDeviceResources: smartDevices,
       findingIds: findings.filter((finding) => finding.type === 'storage.smart_risk' && smartDevices.some((device) => finding.affectedResources.includes(device))).map((finding) => finding.id),
       recommendationIds: smartDevices.map(ensureSmartRecommendation),
-      userConclusion: buildUserConclusion(smartDevices.map((device) => deviceByResource.get(device) ?? { resource: device, smartRiskAttributes: [], ioErrorCount: 0 })),
+      userConclusion: userConclusion(smartDevices.map((device) => deviceByResource.get(device) ?? { resource: device, smartRiskAttributes: [], ioErrorCount: 0 })),
       engineerConclusion: buildEngineerConclusion(smartDevices.map((device) => deviceByResource.get(device) ?? { resource: device, smartRiskAttributes: [], ioErrorCount: 0 }))
     });
   }
@@ -204,11 +247,23 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
 
     const assessment = deviceByResource.get(device) ?? { resource: device, smartRiskAttributes: [], ioErrorCount: 0 };
     if (hasSmart && !hasIo && !failed) {
-      diagnoses.push({ id: 'storage.device.smart_risk', category: 'storage', severity: 'warning', confidence: 'high', title: `${device} 存在 SMART 介质风险`, summary: `${device} 的 SMART 属性 05、197 或 198 存在非零原始值，已出现介质风险；需尽快核验并保护数据。`, primaryResource: device, affectedResources: [device, ...arrays, ...pools], affectedDeviceResources: [device], findingIds: related.filter((finding) => finding.type === 'storage.smart_risk').map((finding) => finding.id), recommendationIds, userConclusion: buildUserConclusion([assessment]), engineerConclusion: buildEngineerConclusion([assessment], arrays, pools) });
+      diagnoses.push({ id: 'storage.device.smart_risk', category: 'storage', severity: 'warning', confidence: 'high', title: `${device} 存在 SMART 介质风险`, summary: `${device} 的 SMART 属性 05、197 或 198 存在非零原始值，已出现介质风险；需尽快核验并保护数据。`, primaryResource: device, affectedResources: [device, ...arrays, ...pools], affectedDeviceResources: [device], findingIds: related.filter((finding) => finding.type === 'storage.smart_risk').map((finding) => finding.id), recommendationIds, userConclusion: userConclusion([assessment]), engineerConclusion: buildEngineerConclusion([assessment], arrays, pools) });
       continue;
     }
     if (!hasIo || (!hasSmart && !failed)) continue;
-    diagnoses.push({ id: 'storage.device.suspected_failure', category: 'storage', severity: 'critical', confidence: hasSmart ? 'high' : 'medium', title: `${device} 高度疑似存在磁盘故障`, summary: `多项独立证据显示 ${device} 持续存在 I/O 异常${hasSmart ? '，SMART 同时存在介质风险' : ''}${filesystemImpacts.length ? '，关联卷出现文件系统挂载异常' : ''}${arrays.length ? `，并影响 ${arrays.join('、')}` : ''}。`, primaryResource: device, affectedResources: [...new Set([device, ...arrays, ...pools, ...filesystemImpacts.flatMap((finding) => finding.affectedResources)])], affectedDeviceResources: hasSmart ? [device] : undefined, findingIds: [...related, ...filesystemImpacts].map((finding) => finding.id), recommendationIds, userConclusion: hasSmart ? buildUserConclusion([assessment]) : undefined, engineerConclusion: buildEngineerConclusion([assessment], arrays, pools), correlationWindowMs: 5 * 60_000 });
+    diagnoses.push({ id: 'storage.device.suspected_failure', category: 'storage', severity: 'critical', confidence: hasSmart ? 'high' : 'medium', title: `${device} 高度疑似存在磁盘故障`, summary: `多项独立证据显示 ${device} 持续存在 I/O 异常${hasSmart ? '，SMART 同时存在介质风险' : ''}${filesystemImpacts.length ? '，关联卷出现文件系统挂载异常' : ''}${arrays.length ? `，并影响 ${arrays.join('、')}` : ''}。`, primaryResource: device, affectedResources: [...new Set([device, ...arrays, ...pools, ...filesystemImpacts.flatMap((finding) => finding.affectedResources)])], affectedDeviceResources: hasSmart ? [device] : undefined, findingIds: [...related, ...filesystemImpacts].map((finding) => finding.id), recommendationIds, userConclusion: hasSmart ? userConclusion([assessment]) : undefined, engineerConclusion: buildEngineerConclusion([assessment], arrays, pools), correlationWindowMs: 5 * 60_000 });
+  }
+  const filesystemPools = findings.filter((finding) => finding.type === 'filesystem.error').flatMap((finding) => finding.affectedResources);
+  const filesystemDevices = deviceAssessments.filter((device) => (deviceArrays.get(device.resource) ?? []).some((array) => (topology.get(array) ?? []).some((pool) => filesystemPools.includes(pool))));
+  const hasDiskFault = smartDevices.length > 0 || [...resources].some((device) => findings.some((finding) => finding.type === 'storage.io_error' && finding.affectedResources.includes(device)));
+  if (filesystemPools.length > 0 && filesystemDevices.length > 0 && !hasDiskFault && filesystemDevices.every((device) => !device.smartRiskAttributes.length && device.ioErrorCount === 0)) {
+    diagnoses.push({ id: 'filesystem.storage.repair', category: 'filesystem', severity: 'warning', confidence: 'high', title: '存储空间文件系统异常', summary: '关联存储池下的存储空间文件系统出现错误，需由工程师远程修复。', affectedResources: [...new Set(filesystemPools)], findingIds: findings.filter((finding) => finding.type === 'filesystem.error').map((finding) => finding.id), recommendationIds: [], userConclusion: '您好，经分析诊断日志，当前硬盘健康信息正常，但存储池下的存储空间文件系统存在异常，需要给您修复文件系统。' });
+  }
+  const missingDeviceFinding = findings.find((finding) => finding.type === 'storage.device_unrecognized');
+  if (missingDeviceFinding) {
+    const resource = missingDeviceFinding.affectedResources.find((value) => value.startsWith('/dev/'));
+    const deviceName = resource ? localizeDeviceLabel(deviceByResource.get(resource)?.label, resource) : '硬盘';
+    diagnoses.unshift({ id: 'storage.device.unrecognized', category: 'storage', severity: 'critical', confidence: 'confirmed', title: '硬盘未被系统识别', summary: '日志记录到硬盘链路或识别异常。', primaryResource: resource, affectedResources: missingDeviceFinding.affectedResources, findingIds: [missingDeviceFinding.id], recommendationIds: [], userConclusion: `您好，经分析诊断日志，${deviceName === '硬盘' ? deviceName : `${deviceName} `}当前未被系统识别，可能存在硬盘接触或槽位异常。请先关机后重新插拔硬盘，或更换其他硬盘槽位接入后再观察。` });
   }
   if (!diagnoses.length) { const raid = findings.find((finding) => finding.type === 'raid.degraded'); if (raid) diagnoses.push({ id: 'raid.array.degraded', category: 'raid', severity: 'critical', confidence: 'confirmed', title: `${raid.affectedResources[0] ?? 'RAID'} 已降级`, summary: '阵列状态异常，需要确认冗余与成员状态。', primaryResource: raid.affectedResources[0], affectedResources: raid.affectedResources, findingIds: [raid.id], recommendationIds: [] }); }
   return { diagnoses, recommendations: recommendations.sort((left, right) => left.priority - right.priority) }; }
