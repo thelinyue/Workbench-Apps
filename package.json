@@ -17,6 +17,7 @@
     "build:lvm-uncache-tool": "node tools/build-lvm-uncache-tool.mjs",
     "build:terminal": "node tools/build-terminal.mjs",
     "build:log-rule-editor": "node tools/build-log-rule-editor.mjs",
+    "dev:workbench": "node tools/dev-workbench.mjs",
     "build": "npm run build:analysis-center && npm run build:lvm-uncache-tool && npm run build:terminal && npm run build:log-rule-editor",
     "validate:catalog": "node tools/validate-catalog.mjs catalog.json"
   },
@@ -28,7 +29,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ssh2": "^1.17.0",
-    "tar": "^7.4.3"
+    "tar": "^7.4.3",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

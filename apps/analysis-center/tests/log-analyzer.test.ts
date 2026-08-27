@@ -111,4 +111,37 @@ describe('内置日志分析引擎', () => {
       'UPS 设备离线，需结合 UPS 事件日志判断是否发生掉电'
     ]));
   });
+
+  it('异常重启规则识别点号日志名中的内存压力、异常中断和启动边界', async () => {
+    const extractDirectory = await mkdtemp(join(tmpdir(), 'workbench-reboot-rules-'));
+    directories.push(extractDirectory);
+    await writeFile(join(extractDirectory, 'journal-5days.log'), [
+      'earlyoom: low memory! at or below SIGKILL limits',
+      'earlyoom: swap free: 0 of 8192 MiB',
+      'systemd-journald: File /var/log/journal/system.journal corrupted or uncleanly shut down, renaming and replacing.',
+      '-- Boot 0123456789abcdef --'
+    ].join('\n'), 'utf8');
+
+    const result = await analyzeExtractedDirectory(extractDirectory, builtInAnalyzerRules.tgz);
+    expect(result.files[0]?.issues.map((issue) => issue.message)).toEqual(expect.arrayContaining([
+      '检测到严重内存压力，earlyoom 已进入强制终止进程阶段，可能导致关键服务退出',
+      '交换空间已耗尽，支持严重内存压力判断',
+      '系统日志未正常关闭，说明上次运行异常中断，但不能单独确定重启原因',
+      '检测到系统启动边界，仅用于确认发生过启动或重启'
+    ]));
+  });
+
+  it('异常重启规则不把已知无因果关系的日志当作重启证据', async () => {
+    const extractDirectory = await mkdtemp(join(tmpdir(), 'workbench-reboot-negative-'));
+    directories.push(extractDirectory);
+    await writeFile(join(extractDirectory, 'journal-5days.log'), [
+      'ramoops: attached 0x100000@0x12340000',
+      'POST /ugreen/v1/desktop/reboot --> handler registered',
+      'systemd[1888]: Reached target shutdown.target',
+      'mcu wdt rst falg:00',
+      'ffprobe -show_streams movie.mkv'
+    ].join('\n'), 'utf8');
+
+    await expect(analyzeExtractedDirectory(extractDirectory, builtInAnalyzerRules.tgz)).resolves.toEqual({ files: [] });
+  });
 });

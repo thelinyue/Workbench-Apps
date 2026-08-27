@@ -2,11 +2,14 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { DiagnosticPackage, DiagnosticPackageStatus } from '../domain/diagnostic-package';
+import type { AnalysisResult } from '../analysis-v1/pipeline';
 
 export const MIN_MONITOR_SCAN_INTERVAL_MINUTES = 1;
 export const DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES = 5;
 export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'comprehensive' | 'storage'; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; createdAt: string; progress: number; message: string; errorMessage?: string; }
 export interface AnalysisRecord { id: string; packageId: string; taskId: string; status: AnalysisTaskRecord['status']; createdAt: string; updatedAt: string; }
+export interface MonitorSettings { directory?: string; enabled: boolean; }
+export interface AnalysisFailureRecord { taskId: string; packageId: string; stage: string; errorMessage: string; inputMetadata: Record<string, string>; createdAt: string; }
 
 const COMPLETED_TASK_STATUSES = ['succeeded', 'failed', 'cancelled'] as const;
 
@@ -77,6 +80,63 @@ export class WorkspaceRepository {
   public upsertReport(packageId: string, path: string): void {
     this.database.prepare(`INSERT INTO report_index (package_id, path, created_at) VALUES (?, ?, ?)
       ON CONFLICT(package_id) DO UPDATE SET path = excluded.path, created_at = excluded.created_at`).run(packageId, path, new Date().toISOString());
+  }
+
+  /**
+   * V1 监控只维护一个目录。旧版多目录设置仍保留读写兼容，避免升级时丢失用户已有配置。
+   */
+  public getMonitorSettings(): MonitorSettings {
+    const directoryRow = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorDirectory'").get() as { value: string } | undefined;
+    const enabledRow = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorEnabled'").get() as { value: string } | undefined;
+    const legacyDirectory = this.getMonitorDirectories()[0];
+    const directory = directoryRow?.value || legacyDirectory;
+    return { directory: directory || undefined, enabled: enabledRow ? enabledRow.value === 'true' : Boolean(directory) };
+  }
+
+  public saveMonitorSettings(settings: MonitorSettings): void {
+    const directory = settings.directory?.trim();
+    this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorDirectory', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(directory ?? '');
+    this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorEnabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(Boolean(directory && settings.enabled)));
+    this.saveMonitorDirectories(directory ? [directory] : []);
+  }
+
+  /** V1 结果保存的是工程结论，不保存无限增长的原始日志上下文。 */
+  public saveAnalysisResult(packageId: string, taskId: string, result: AnalysisResult): void {
+    this.database.exec('BEGIN;');
+    try {
+      this.database.prepare(`INSERT INTO analysis_results (package_id, task_id, result_json, created_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(package_id) DO UPDATE SET task_id = excluded.task_id, result_json = excluded.result_json, created_at = excluded.created_at`)
+        .run(packageId, taskId, JSON.stringify(result), new Date().toISOString());
+      this.database.exec(`DELETE FROM analysis_results WHERE package_id IN (
+        SELECT package_id FROM analysis_results ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 20
+      );`);
+      this.database.exec('COMMIT;');
+    } catch (error) {
+      this.database.exec('ROLLBACK;');
+      throw error;
+    }
+  }
+
+  public getAnalysisResult(packageId: string): AnalysisResult | undefined {
+    const row = this.database.prepare('SELECT result_json AS resultJson FROM analysis_results WHERE package_id = ?').get(packageId) as { resultJson: string } | undefined;
+    return row ? JSON.parse(row.resultJson) as AnalysisResult : undefined;
+  }
+
+  public listRecentAnalysisResults(limit = 20): Array<{ packageId: string; result: AnalysisResult }> {
+    return (this.database.prepare('SELECT package_id AS packageId, result_json AS resultJson FROM analysis_results ORDER BY created_at DESC LIMIT ?').all(Math.min(Math.max(1, limit), 20)) as Array<{ packageId: string; resultJson: string }>)
+      .map((row) => ({ packageId: row.packageId, result: JSON.parse(row.resultJson) as AnalysisResult }));
+  }
+
+  /** Failed 任务只保存可读诊断信息和输入标识，绝不把失败时的原始日志写入数据库。 */
+  public saveAnalysisFailure(packageId: string, taskId: string, stage: string, errorMessage: string, inputMetadata: Record<string, string>): void {
+    this.database.prepare(`INSERT INTO analysis_failures (task_id, package_id, stage, error_message, input_metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET stage = excluded.stage, error_message = excluded.error_message, input_metadata = excluded.input_metadata, created_at = excluded.created_at`)
+      .run(taskId, packageId, stage, errorMessage, JSON.stringify(inputMetadata), new Date().toISOString());
+  }
+
+  public getAnalysisFailure(taskId: string): AnalysisFailureRecord | undefined {
+    const row = this.database.prepare(`SELECT task_id AS taskId, package_id AS packageId, stage, error_message AS errorMessage, input_metadata AS inputMetadata, created_at AS createdAt FROM analysis_failures WHERE task_id = ?`).get(taskId) as Omit<AnalysisFailureRecord, 'inputMetadata'> & { inputMetadata: string } | undefined;
+    return row ? { ...row, inputMetadata: JSON.parse(row.inputMetadata) as Record<string, string> } : undefined;
   }
 
   public countLifecycleRecords(packageIds: string[]): { caseCount: number; analysisRecordCount: number; reportRecordCount: number } {
@@ -168,7 +228,10 @@ export class WorkspaceRepository {
       CREATE TABLE IF NOT EXISTS analysis_cases (id TEXT PRIMARY KEY, package_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS analysis_records (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE, FOREIGN KEY(task_id) REFERENCES analysis_tasks(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS report_index (package_id TEXT PRIMARY KEY, path TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS analysis_results (package_id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE, FOREIGN KEY(task_id) REFERENCES analysis_tasks(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS analysis_failures (task_id TEXT PRIMARY KEY, package_id TEXT NOT NULL, stage TEXT NOT NULL, error_message TEXT NOT NULL, input_metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE, FOREIGN KEY(task_id) REFERENCES analysis_tasks(id) ON DELETE CASCADE);
     `);
     try { this.database.exec("ALTER TABLE analysis_tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'comprehensive';"); } catch { /* 已升级数据库会报告重复列，保持兼容。 */ }
+    try { this.database.exec("ALTER TABLE analysis_failures ADD COLUMN input_metadata TEXT NOT NULL DEFAULT '{}';"); } catch { /* 新建或已升级数据库均无需处理。 */ }
   }
 }

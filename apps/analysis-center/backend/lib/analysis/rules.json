@@ -1,5 +1,6 @@
 {
   "tgz": {
+    "version": "2026.08.26",
     "files": [
         {
             "name": "sysinfo.json", 
@@ -33,6 +34,7 @@
         },        
         {
             "name": "kern", 
+            "file_patterns": ["^kern(?:\\.log)?$"],
             "category": "内核服务",
             "keywords": [
                 {"term": "DMI: UGREEN", "result": "设备型号","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
@@ -43,7 +45,6 @@
                 {"term": "failed: Result: hostbyte=DID_BAD_TARGET driverbyte=DRIVER_OK", "result": "系统无法与硬盘通讯，驱动正常","regex": false, "context_lines": 2, "context_direction": "up", "search_direction": "up"},
                 {"term": "ata.*hard resetting link", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
                 {"term": "ata.*failed.*INIT_DEV_PARAMS", "result": "硬盘获取信息失败，硬盘或SATA异常","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
-                {"term": "ata.*hard resetting link", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
                 {"term": "sd.*FAILED Result: hostbyte=DID_OK driverbyte=DRIVER_OK", "result": "SATA接触不良或硬盘故障","regex": true, "context_lines": 3, "context_direction": "down", "search_direction": "up"},
                 {"term": "BUG: kernel NULL pointer dereference", "result": "空指针引用，内存或者程序bug","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
                 {"term": "BUG: Bad page map", "result": "内存管理错误（检查内存）","regex": false, "context_lines": 20, "context_direction": "down", "search_direction": "up"},
@@ -70,7 +71,6 @@
             "keywords": [
                 {"term": "dmidecode 3.4", "result": "内存信息","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
                 {"term": "Manufacturer: QEMU", "result": "可能是虚拟机搭建的绿联云，虚拟设备！！！","regex": false, "context_lines": 15, "context_direction": "down", "search_direction": "up"},
-                {"term": "EXT4-fs.*error", "result": "ext4文件系统错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
                 {"term": "Read-only file system", "result": "文件系统只读，读写文件失败","regex": false, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
                 {"term": "filemgr_serv.*ug_acl_del_ace malloc fail", "result": "UGACL权限应用失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
                 {"term": "nvme.*I/O Error", "result": "nvmeI/O错误","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
@@ -92,6 +92,8 @@
                 {"term": "i915.*GPU HANG", "result": "i915 GPU异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
                 {"term": "earlyoom.*sending SIGKILL", "result": "程序内存占用过高，触发oom","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
                 {"term": "earlyoom.*sending SIGKILL.*qemu-system-x86", "result": "虚拟机实例内存占用过高，触发oom","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
+                {"term": "earlyoom.*low memory! at or below SIGKILL", "result": "检测到严重内存压力，earlyoom 已进入强制终止进程阶段，可能导致关键服务退出","regex": true, "severity": "critical", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "earlyoom.*swap free:\\s*0 of", "result": "交换空间已耗尽，支持严重内存压力判断","regex": true, "severity": "critical", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "Linux version", "result": "记录到内核启动标记，可用于确认一次启动或重启","regex": false, "severity": "info", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "EXT4-fs.*recovery complete", "result": "EXT4 文件系统启动时完成日志恢复，支持上次未正常卸载","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "EXT4-fs.*orphan inode(?:s)? deleted", "result": "EXT4 清理未正常关闭遗留的 orphan inode，支持上次异常中断","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
@@ -106,6 +108,7 @@
         },
         {
             "name": "journal-5days",
+            "file_patterns": ["^journal-5days(?:\\.log)?$"],
             "category": "5天日志记录",
             "keywords": [
                 {"term": "Failed to open system journal.*No space left on device", "result": "系统存储空间不足，程序可能运行异常，用户登录失败","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
@@ -133,6 +136,10 @@
                 {"term": "(?:Out of memory|oom-kill)", "result": "发现内存耗尽证据，需检查高占用进程或虚拟机","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
                 {"term": "thermal.*shutdown", "result": "发现过温关机证据，需检查散热和环境温度","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
                 {"term": "watchdog.*(?:hard|soft) lockup", "result": "发现看门狗锁死证据，需检查内核、驱动和硬件","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
+                {"term": "earlyoom.*low memory! at or below SIGKILL", "result": "检测到严重内存压力，earlyoom 已进入强制终止进程阶段，可能导致关键服务退出","regex": true, "severity": "critical", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "earlyoom.*swap free:\\s*0 of", "result": "交换空间已耗尽，支持严重内存压力判断","regex": true, "severity": "critical", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "system\\.journal corrupted or uncleanly shut down", "result": "系统日志未正常关闭，说明上次运行异常中断，但不能单独确定重启原因","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "^-- Boot [0-9a-f]+ --$", "result": "检测到系统启动边界，仅用于确认发生过启动或重启","regex": true, "severity": "info", "context_lines": 0, "context_direction": "down", "search_direction": "up"},
                 {"term": "UPS .*on battery", "result": "UPS 已切换至电池供电，说明外部输入曾出现异常","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "upsmon.*Communications with UPS.*lost", "result": "UPS 通信丢失，需结合 UPS 事件日志判断是否发生掉电","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "upssched.*Event: upsgone", "result": "UPS 设备离线，需结合 UPS 事件日志判断是否发生掉电","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"}
@@ -274,6 +281,7 @@
     ]
   },
   "zip": {
+    "version": "2026.08.26",
     "files": [
       {
         "name": "zip_syslog",
@@ -286,6 +294,10 @@
           {"term": "nvme.*Removing after probe failure status: -19", "result": "NVMe 探测失败后已移除设备", "regex": true, "severity": "critical", "context_lines": 2},
           {"term": "blk_update_request: I/O error, dev nvme", "result": "NVMe 块设备发生 I/O 错误", "regex": false, "severity": "critical", "context_lines": 2},
           {"term": "XFS.*Log I/O Error Detected.*Shutting down filesystem", "result": "XFS 日志 I/O 错误，文件系统已强制关闭", "regex": true, "severity": "critical", "context_lines": 2},
+          {"term": "earlyoom.*low memory! at or below SIGKILL", "result": "检测到严重内存压力，earlyoom 已进入强制终止进程阶段，可能导致关键服务退出", "regex": true, "severity": "critical", "context_lines": 1},
+          {"term": "earlyoom.*swap free:\\s*0 of", "result": "交换空间已耗尽，支持严重内存压力判断", "regex": true, "severity": "critical", "context_lines": 1},
+          {"term": "system\\.journal corrupted or uncleanly shut down", "result": "系统日志未正常关闭，说明上次运行异常中断，但不能单独确定重启原因", "regex": true, "severity": "warning", "context_lines": 1},
+          {"term": "^-- Boot [0-9a-f]+ --$", "result": "检测到系统启动边界，仅用于确认发生过启动或重启", "regex": true, "severity": "info", "context_lines": 0},
           {"term": "UPS ups0@localhost on battery", "result": "UPS 已切换至电池供电", "regex": false, "severity": "warning", "context_lines": 2},
           {"term": "upssched.*Event: upsgone", "result": "UPS 通信中断触发关机事件", "regex": true, "severity": "critical", "context_lines": 2},
           {"term": "upsmon.*Communications with UPS.*lost", "result": "与 UPS 的通信已丢失", "regex": true, "severity": "info", "context_lines": 2}
@@ -301,7 +313,14 @@
           {"term": "nvme.*Device not ready; aborting reset", "result": "NVMe 设备未就绪，重置已中止", "regex": true, "severity": "critical", "context_lines": 4},
           {"term": "nvme.*Removing after probe failure status: -19", "result": "NVMe 探测失败后已移除设备", "regex": true, "severity": "critical", "context_lines": 2},
           {"term": "blk_update_request: I/O error, dev nvme", "result": "NVMe 块设备发生 I/O 错误", "regex": false, "severity": "critical", "context_lines": 2},
-          {"term": "XFS.*Log I/O Error Detected.*Shutting down filesystem", "result": "XFS 日志 I/O 错误，文件系统已强制关闭", "regex": true, "severity": "critical", "context_lines": 2}
+          {"term": "XFS.*Log I/O Error Detected.*Shutting down filesystem", "result": "XFS 日志 I/O 错误，文件系统已强制关闭", "regex": true, "severity": "critical", "context_lines": 2},
+          {"term": "Linux version", "result": "记录到内核启动标记，可用于确认一次启动或重启", "regex": false, "severity": "info", "context_lines": 1},
+          {"term": "EXT4-fs.*recovery complete", "result": "EXT4 文件系统启动时完成日志恢复，支持上次未正常卸载", "regex": true, "severity": "warning", "context_lines": 1},
+          {"term": "EXT4-fs.*orphan inode(?:s)? deleted", "result": "EXT4 清理未正常关闭遗留的 orphan inode，支持上次异常中断", "regex": true, "severity": "warning", "context_lines": 1},
+          {"term": "Kernel panic", "result": "发现内核崩溃证据，需优先检查内核、驱动和硬件", "regex": false, "severity": "critical", "context_lines": 20},
+          {"term": "(?:Out of memory|oom-kill)", "result": "发现内存耗尽证据，需检查高占用进程或虚拟机", "regex": true, "severity": "critical", "context_lines": 2},
+          {"term": "thermal.*shutdown", "result": "发现过温关机证据，需检查散热和环境温度", "regex": true, "severity": "critical", "context_lines": 2},
+          {"term": "watchdog.*(?:hard|soft) lockup", "result": "发现看门狗锁死证据，需检查内核、驱动和硬件", "regex": true, "severity": "critical", "context_lines": 2}
         ]
       },
       {

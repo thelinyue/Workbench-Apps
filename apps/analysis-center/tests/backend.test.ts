@@ -14,9 +14,9 @@ describe('分析中心 backend Worker', () => {
     const backend = createAppBackend({ appId: 'analysis-center', dataDirectory, manifest: {}, emit: () => undefined });
 
     await expect(backend.invoke('packages.list', null)).resolves.toEqual([]);
-    await expect(backend.invoke('settings.get', null)).resolves.toEqual({ directories: [], scanIntervalMinutes: 5 });
-    await backend.invoke('settings.save', { directories: [dataDirectory], scanIntervalMinutes: 10 });
-    await expect(backend.invoke('settings.get', null)).resolves.toEqual({ directories: [dataDirectory], scanIntervalMinutes: 10 });
+    await expect(backend.invoke('settings.get', null)).resolves.toEqual({ directory: undefined, enabled: false });
+    await backend.invoke('settings.save', { directory: dataDirectory, enabled: true });
+    await expect(backend.invoke('settings.get', null)).resolves.toEqual({ directory: dataDirectory, enabled: true });
 
     backend.close();
     await expect(readFile(join(dataDirectory, 'analysis-center.db'))).resolves.toBeDefined();

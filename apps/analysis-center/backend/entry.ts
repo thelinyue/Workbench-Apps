@@ -1,7 +1,9 @@
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { AnalysisCenterService } from './lib/services/analysis-center-service';
 import { AnalysisTaskService } from './lib/services/analysis-task-service';
+import { MonitorDirectoryService } from './lib/services/monitor-directory-service';
 import { LifecycleDeletionService } from './lib/services/lifecycle-deletion-service';
 import { WorkspaceRepository } from './lib/data/workspace-repository';
 import type { AnalyzerRuleCatalog } from './lib/analysis/log-analyzer';
@@ -34,10 +36,13 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
   const repository = new WorkspaceRepository(join(context.dataDirectory, 'analysis-center.db'));
   const analysis = new AnalysisCenterService(repository);
   const tasks = new AnalysisTaskService(repository);
+  const monitor = new MonitorDirectoryService(repository, analysis);
   const deletion = new LifecycleDeletionService(repository);
   const pendingDeletions = new Map<string, PendingDeletion>();
   const emitChanged = () => context.emit('tasks.changed', { tasks: repository.listTasks() });
   tasks.on('changed', emitChanged);
+  monitor.on('changed', () => context.emit('packages.changed', {}));
+  void monitor.start().catch((error) => console.error(`监控目录启动失败：${error instanceof Error ? error.message : String(error)}`));
 
   const getPackage = (id: string) => {
     const item = analysis.getPackage(id);
@@ -55,22 +60,43 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           context.emit('packages.changed', { packageId: item.id });
           return item;
         }
-        case 'packages.scan': {
-          const result = await analysis.scanMonitorDirectories();
-          context.emit('packages.changed', { count: result.length });
-          return result;
-        }
+        case 'packages.scan': { await monitor.scanNow(); return analysis.listPackages(); }
         case 'analysis.start': {
           const value = readRecord(payload);
-          await tasks.enqueue(getPackage(readString(value.packageId)).id, value.scope === 'storage' ? 'storage' : 'comprehensive', readRules(value.rules));
+          await tasks.enqueue(getPackage(readString(value.packageId)).id, value.scope === 'storage' ? 'storage' : 'comprehensive');
           return undefined;
         }
-        case 'analysis.start-all-pending': return tasks.enqueueAllPending(readRules(readRecord(payload).rules));
+        case 'analysis.start-all-pending': return tasks.enqueueAllPending();
         case 'tasks.list': return repository.listTasks();
         case 'tasks.cancel': tasks.cancel(readString(payload, 'taskId')); return undefined;
         case 'tasks.clear': tasks.clear(readString(payload, 'taskId')); return undefined;
         case 'tasks.clear-completed': return tasks.clearCompleted();
         case 'reports.path': return getPackage(readString(payload, 'packageId')).reportPath ?? null;
+        case 'results.get': return repository.getAnalysisResult(readString(payload, 'packageId')) ?? null;
+        case 'results.recent': return repository.listRecentAnalysisResults();
+        case 'results.html': {
+          const path = getPackage(readString(payload, 'packageId')).reportPath;
+          if (!path) throw new Error('该诊断包尚未生成浏览器呈现文件。');
+          return readFile(path, 'utf8');
+        }
+        case 'results.evidence-context': {
+          const value = readRecord(payload);
+          const diagnosticPackage = getPackage(readString(value.packageId));
+          const result = repository.getAnalysisResult(diagnosticPackage.id);
+          const evidence = result?.evidence.find((item) => item.id === readString(value, 'evidenceId'));
+          if (!evidence) throw new Error('找不到指定的分析证据。');
+          if (!evidence.lineNumber) return { available: false, lines: [], message: '该证据没有可定位的文本行，保留已持久化的原文摘要。' };
+          const sourcePath = resolve(diagnosticPackage.extractPath, evidence.sourceFile);
+          const extractionRoot = resolve(diagnosticPackage.extractPath);
+          if (isAbsolute(relative(extractionRoot, sourcePath)) || relative(extractionRoot, sourcePath).startsWith('..')) throw new Error('证据源文件路径无效。');
+          try {
+            const lines = (await readFile(sourcePath, 'utf8')).split(/\r?\n/);
+            const start = Math.max(0, evidence.lineNumber - 4);
+            return { available: true, lines: lines.slice(start, evidence.lineNumber + 3) };
+          } catch {
+            return { available: false, lines: [], message: '源日志已不存在，当前保留诊断结论与证据摘要。' };
+          }
+        }
         case 'packages.locate-source': return getPackage(readString(payload, 'packageId')).sourcePath;
         case 'packages.locate-extract': return getPackage(readString(payload, 'packageId')).extractPath;
         case 'packages.delete-preview': {
@@ -92,14 +118,14 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           context.emit('packages.changed', { packageIds });
           return undefined;
         }
-        case 'settings.get': return { directories: repository.getMonitorDirectories(), scanIntervalMinutes: repository.getMonitorScanIntervalMinutes() };
+        case 'settings.get': return repository.getMonitorSettings();
         case 'settings.save': {
           const value = readRecord(payload);
-          const directories = readStringArray(value, 'directories');
-          const scanIntervalMinutes = Number(value.scanIntervalMinutes);
-          if (!Number.isInteger(scanIntervalMinutes) || scanIntervalMinutes < 1) throw new Error('自动扫描间隔至少为 1 分钟');
-          repository.saveMonitorDirectories(directories);
-          repository.saveMonitorScanIntervalMinutes(scanIntervalMinutes);
+          const directory = value.directory === undefined || value.directory === null ? undefined : readString(value, 'directory');
+          if (typeof value.enabled !== 'boolean') throw new Error('监控目录启用状态必须是布尔值');
+          if (value.enabled && !directory) throw new Error('启用监控前请选择目录');
+          repository.saveMonitorSettings({ directory, enabled: value.enabled });
+          await monitor.reconfigure();
           return undefined;
         }
         default: throw new Error(`分析中心不支持该请求：${method}`);
@@ -107,6 +133,7 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
     },
     close() {
       tasks.off('changed', emitChanged);
+      monitor.close();
       repository.close();
     }
   };

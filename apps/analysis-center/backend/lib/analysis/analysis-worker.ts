@@ -1,13 +1,9 @@
 import { parentPort, workerData } from 'node:worker_threads';
-import { runArchiveAnalysis } from './archive-analysis';
-import type { AnalyzerRuleCatalog } from './log-analyzer';
-import type { AnalysisScope } from './archive-analysis';
+import { runV1ArchiveAnalysis } from './archive-analysis';
 
 interface AnalysisWorkerInput {
   sourcePath: string;
   extractDirectory: string;
-  rules: AnalyzerRuleCatalog;
-  scope: AnalysisScope;
 }
 
 /**
@@ -19,8 +15,8 @@ interface AnalysisWorkerInput {
 void (async () => {
   try {
     const input = workerData as AnalysisWorkerInput;
-    const result = await runArchiveAnalysis({ ...input, onProgress: (progress) => parentPort?.postMessage({ type: 'progress', ...progress }) });
-    parentPort?.postMessage({ type: 'completed', succeeded: true, reportPath: result.reportPath });
+    const result = await runV1ArchiveAnalysis({ ...input, onProgress: (progress) => parentPort?.postMessage({ type: 'progress', ...progress }) });
+    parentPort?.postMessage({ type: 'completed', succeeded: true, browserPath: result.browserPath, analysisResult: result.result });
   } catch (error) {
     parentPort?.postMessage({ type: 'completed', succeeded: false, errorMessage: error instanceof Error ? error.message : String(error) });
   }

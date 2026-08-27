@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { Worker } from 'node:worker_threads';
-import { join } from 'node:path';
 import type { AnalyzerRuleCatalog } from '../analysis/log-analyzer';
 import type { AnalysisTaskRecord, WorkspaceRepository } from '../data/workspace-repository';
+import type { AnalysisResult } from '../analysis-v1/pipeline';
 
 /**
  * 主进程内的分析任务调度器。
@@ -24,7 +24,7 @@ export class AnalysisTaskService extends EventEmitter {
    * 将规则快照绑定到任务，而不是在 Worker 中再次读取外部文件。
    * 这样规则编辑器保存后的结果可以按一次分析任务稳定复现，任务执行期间规则变化也不会影响当前任务。
    */
-  public async enqueue(packageId: string, scope: 'comprehensive' | 'storage' = 'comprehensive', rules: AnalyzerRuleCatalog): Promise<void> {
+  public async enqueue(packageId: string, scope: 'comprehensive' | 'storage' = 'comprehensive', _legacyRules?: AnalyzerRuleCatalog): Promise<void> {
     const diagnosticPackage = this.repository.getPackage(packageId);
     if (!diagnosticPackage) throw new Error('找不到要分析的诊断包');
     if (diagnosticPackage.status === 'running' || diagnosticPackage.status === 'queued') throw new Error('该诊断包已经在分析队列中');
@@ -34,12 +34,12 @@ export class AnalysisTaskService extends EventEmitter {
     this.repository.upsertPackage(diagnosticPackage);
     this.repository.upsertTask(task);
     this.emit('changed');
-    void this.processQueue(rules);
+    void this.processQueue();
   }
 
-  public async enqueueAllPending(rules: AnalyzerRuleCatalog): Promise<{ count: number; packageNames: string[] }> {
+  public async enqueueAllPending(_legacyRules?: AnalyzerRuleCatalog): Promise<{ count: number; packageNames: string[] }> {
     const packages = this.repository.listPackages().filter((item) => item.status === 'pending');
-    for (const item of packages) await this.enqueue(item.id, 'comprehensive', rules);
+    for (const item of packages) await this.enqueue(item.id, 'comprehensive');
     return { count: packages.length, packageNames: packages.map((item) => item.displayName) };
   }
 
@@ -74,7 +74,7 @@ export class AnalysisTaskService extends EventEmitter {
     return count;
   }
 
-  private async processQueue(rules: AnalyzerRuleCatalog): Promise<void> {
+  private async processQueue(): Promise<void> {
     if (this.processing) return;
     this.processing = true;
     try {
@@ -82,12 +82,12 @@ export class AnalysisTaskService extends EventEmitter {
         const task = this.repository.listTasks().find((item) => item.status === 'queued');
         if (!task) return;
         if (this.cancelledTaskIds.has(task.id)) continue;
-        await this.run(task, rules);
+        await this.run(task);
       }
     } finally { this.processing = false; }
   }
 
-  private async run(task: AnalysisTaskRecord, rules: AnalyzerRuleCatalog): Promise<void> {
+  private async run(task: AnalysisTaskRecord): Promise<void> {
     const diagnosticPackage = this.repository.getPackage(task.packageId);
     if (!diagnosticPackage) return;
     this.activeTaskId = task.id;
@@ -99,7 +99,7 @@ export class AnalysisTaskService extends EventEmitter {
     this.emit('changed');
 
     try {
-      const reportPath = await this.runWorker(diagnosticPackage.sourcePath, diagnosticPackage.extractPath, task.scope, rules, (progress, message) => {
+      const output = await this.runWorker(diagnosticPackage.sourcePath, diagnosticPackage.extractPath, (progress, message) => {
         const current = this.repository.getTask(task.id);
         if (!current || current.status !== 'running') return;
         this.repository.upsertTask({ ...current, progress: Math.max(current.progress, progress), message });
@@ -107,35 +107,47 @@ export class AnalysisTaskService extends EventEmitter {
       });
       if (this.cancelledTaskIds.has(task.id)) return;
       diagnosticPackage.status = 'report-ready';
-      diagnosticPackage.reportPath = reportPath;
+      diagnosticPackage.reportPath = output.browserPath;
       this.repository.upsertPackage(diagnosticPackage);
-      this.repository.upsertTask({ ...runningTask, status: 'succeeded', progress: 100, message: '报告已生成' });
+      this.repository.upsertTask({ ...runningTask, status: 'succeeded', progress: 100, message: '诊断结果已完成' });
       this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'succeeded', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
-      this.repository.upsertReport(task.packageId, reportPath);
+      this.repository.saveAnalysisResult(task.packageId, task.id, output.result);
+      this.repository.upsertReport(task.packageId, output.browserPath);
     } catch (error) {
       if (this.cancelledTaskIds.has(task.id)) return;
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const failureMessage = `分析引擎执行失败：${errorMessage}`;
       diagnosticPackage.status = 'failed';
       this.repository.upsertPackage(diagnosticPackage);
-      this.repository.upsertTask({ ...runningTask, status: 'failed', progress: 100, message: '分析失败', errorMessage });
+      this.repository.upsertTask({ ...runningTask, status: 'failed', progress: 100, message: '分析失败', errorMessage: failureMessage });
       this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'failed', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
+      this.repository.saveAnalysisFailure(task.packageId, task.id, inferFailureStage(errorMessage), failureMessage, { sourcePath: diagnosticPackage.sourcePath, displayName: diagnosticPackage.displayName });
     } finally { this.activeWorker = undefined; this.activeTaskId = undefined; this.activeCancellation = undefined; this.emit('changed'); }
   }
 
-  private runWorker(sourcePath: string, extractDirectory: string, scope: 'comprehensive' | 'storage', rules: AnalyzerRuleCatalog, onProgress: (progress: number, message: string) => void): Promise<string> {
+  private runWorker(sourcePath: string, extractDirectory: string, onProgress: (progress: number, message: string) => void): Promise<{ browserPath: string; result: AnalysisResult }> {
     return new Promise((resolve, reject) => {
-      const worker = new Worker(join(__dirname, 'analysis-worker.js'), { workerData: { sourcePath, extractDirectory, rules, scope } });
+      // 分析中心 backend 以 ESM 发布，必须从实际 entry URL 定位同级 Worker，不能依赖 CommonJS 的 __dirname。
+      const worker = new Worker(new URL('./analysis-worker.js', import.meta.url), { workerData: { sourcePath, extractDirectory } });
       this.activeWorker = worker;
       let settled = false;
       const fail = (error: Error) => { if (!settled) { settled = true; reject(error); } };
-      const succeed = (reportPath: string) => { if (!settled) { settled = true; resolve(reportPath); } };
+      const succeed = (browserPath: string, result: AnalysisResult) => { if (!settled) { settled = true; resolve({ browserPath, result }); } };
       this.activeCancellation = () => fail(new Error('任务已取消'));
-      worker.on('message', (result: { type?: 'progress' | 'completed'; progress?: number; message?: string; succeeded?: boolean; reportPath?: string; errorMessage?: string }) => {
+      worker.on('message', (result: { type?: 'progress' | 'completed'; progress?: number; message?: string; succeeded?: boolean; browserPath?: string; analysisResult?: AnalysisResult; errorMessage?: string }) => {
         if (result.type === 'progress' && typeof result.progress === 'number' && result.message) { onProgress(result.progress, result.message); return; }
-        if (result.type === 'completed' || result.succeeded !== undefined) result.succeeded && result.reportPath ? succeed(result.reportPath) : fail(new Error(result.errorMessage ?? '分析引擎没有返回报告路径'));
+        if (result.type === 'completed' || result.succeeded !== undefined) result.succeeded && result.browserPath && result.analysisResult ? succeed(result.browserPath, result.analysisResult) : fail(new Error(result.errorMessage ?? '分析引擎没有返回诊断结果'));
       });
       worker.once('error', (error) => fail(new Error(`分析引擎工作线程异常：${error.message}`)));
       worker.once('exit', (code) => { if (code !== 0) fail(new Error(`分析引擎工作线程异常退出，退出码：${code}`)); });
     });
   }
+}
+
+/** Worker 只返回用户可读的错误，主线程据此归类失败阶段，避免泄露不稳定的底层堆栈。 */
+function inferFailureStage(message: string): string {
+  if (message.includes('解压')) return '解压';
+  if (message.includes('识别日志包')) return '识别来源';
+  if (message.includes('读取') || message.includes('解析')) return '解析事件';
+  return '生成结果';
 }

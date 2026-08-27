@@ -1,0 +1,1 @@
+{"disk_info":[{"dev_name":"/dev/sda","smart":[{"name":"Current_Pending_Sector","raw_string":"1544"},{"name":"Offline_Uncorrectable","raw_string":"1544"},{"name":"Reallocated_Sector_Ct","raw_string":"792"}]}]}

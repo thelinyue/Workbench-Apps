@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "eventRules": [
+    {"id":"storage.io.blk_update","sources":["kernel"],"regex":"blk_update_request: I/O error, dev (?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
+    {"id":"storage.io.buffer","sources":["kernel"],"regex":"Buffer I/O error on dev (?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
+    {"id":"storage.io.generic","sources":["kernel"],"regex":"I/O error.*(?:dev |on )(?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
+    {"id":"storage.timeout","sources":["kernel"],"regex":"(?:timed out|timeout).*?(?:dev |on )(?<device>[a-zA-Z0-9]+)","type":"storage.timeout"},
+    {"id":"storage.device_reset","sources":["kernel"],"regex":"(?:reset controller|Device not ready|hard resetting)","type":"storage.device_reset"},
+    {"id":"storage.ata.error","sources":["kernel"],"regex":"ata\\d+.*(?:error|failed)","type":"storage.ata_error"},
+    {"id":"storage.scsi.medium","sources":["kernel"],"regex":"(?:medium error|uncorrectable)","type":"storage.media_error"},
+    {"id":"storage.nvme.error","sources":["kernel"],"regex":"nvme.*(?:I/O Error|error)","type":"storage.nvme_error"},
+    {"id":"system.kernel.panic","sources":["kernel"],"regex":"Kernel panic","type":"system.kernel_panic"},
+    {"id":"system.oom","sources":["kernel"],"regex":"Out of memory","type":"system.oom"},
+    {"id":"system.oom_killer","sources":["kernel"],"regex":"oom-kill|Killed process","type":"system.oom_killer"},
+    {"id":"system.watchdog","sources":["kernel"],"regex":"watchdog.*(?:hard|soft) lockup","type":"system.watchdog"},
+    {"id":"system.shutdown.unclean","sources":["kernel"],"regex":"uncleanly shut down|orphan inode|recovery complete","type":"system.unclean_shutdown"},
+    {"id":"filesystem.ext4.error","sources":["kernel"],"regex":"EXT4-fs.*(?:error|I/O)","type":"filesystem.error"},
+    {"id":"filesystem.xfs.error","sources":["kernel"],"regex":"XFS.*(?:error|corrupt|I/O)","type":"filesystem.error"},
+    {"id":"filesystem.btrfs.error","sources":["kernel"],"regex":"BTRFS.*error","type":"filesystem.error"},
+    {"id":"filesystem.readonly","sources":["kernel"],"regex":"Remounting filesystem read-only|read-only file system","type":"filesystem.read_only"},
+    {"id":"storage.smart.pending_sector","sources":["sysinfo"],"regex":"Current_Pending_Sector","type":"storage.smart_risk"},
+    {"id":"storage.smart.reallocated","sources":["sysinfo"],"regex":"Reallocated_Sector_Ct","type":"storage.smart_risk"},
+    {"id":"storage.smart.uncorrectable","sources":["sysinfo"],"regex":"Offline_Uncorrectable","type":"storage.smart_risk"},
+    {"id":"raid.array.degraded","sources":["mdstat"],"regex":"\\[\\d+\\/\\d+\\].*(?:_|broken)","type":"raid.degraded"},
+    {"id":"filesystem.mount.superblock","sources":["ugvolume"],"regex":"can't read superblock","type":"filesystem.error"}
+  ]
+}
