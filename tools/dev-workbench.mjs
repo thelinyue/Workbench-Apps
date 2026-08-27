@@ -38,7 +38,8 @@ async function main() {
   let rebuildQueued = false;
   let stopped = false;
   const watcher = watch(paths.appDirectory, { recursive: true });
-  const workbench = spawn(npmCommand(), ['run', 'dev'], {
+  const devCommand = getWorkbenchDevCommand();
+  const workbench = spawn(devCommand.command, devCommand.args, {
     cwd: paths.workbenchRoot,
     env: { ...process.env, HEPHAESTUS_DEV_APP_ID: appId, HEPHAESTUS_DEV_APP_DIST: paths.distDirectory },
     stdio: 'inherit',
@@ -96,14 +97,23 @@ async function main() {
 
 function buildApp(appId) {
   return new Promise((resolveBuild, rejectBuild) => {
-    const child = spawn(npmCommand(), ['run', `build:${appId}`], { cwd: root, stdio: 'inherit', windowsHide: true });
+    const command = getNpmRunCommand(`build:${appId}`);
+    const child = spawn(command.command, command.args, { cwd: root, stdio: 'inherit', windowsHide: true });
     child.once('error', (error) => rejectBuild(new Error(`无法启动应用构建：${error.message}`)));
     child.once('exit', (code) => code === 0 ? resolveBuild() : rejectBuild(new Error(`构建命令退出码：${code ?? '未知'}`)));
   });
 }
 
-function npmCommand() {
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+/** Windows 不能可靠地直接由 Node spawn .cmd；通过 cmd.exe 保持本机 npm 的调用语义。 */
+export function getWorkbenchDevCommand(platform = process.platform) {
+  return getNpmRunCommand('dev', platform);
+}
+
+/** 统一包装 npm 调用，避免 Windows 下直接 spawn .cmd 返回 EINVAL。 */
+export function getNpmRunCommand(script, platform = process.platform) {
+  return platform === 'win32'
+    ? { command: 'cmd.exe', args: ['/d', '/s', '/c', `npm.cmd run ${script}`] }
+    : { command: 'npm', args: ['run', script] };
 }
 
 function terminate(child) {
