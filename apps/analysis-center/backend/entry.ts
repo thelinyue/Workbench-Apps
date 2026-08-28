@@ -6,6 +6,7 @@ import { AnalysisTaskService } from './lib/services/analysis-task-service';
 import { MonitorDirectoryService } from './lib/services/monitor-directory-service';
 import { LifecycleDeletionService } from './lib/services/lifecycle-deletion-service';
 import { createAnalysisBackendShutdown } from './lib/services/analysis-backend-shutdown';
+import { SysinfoReportService } from './lib/services/sysinfo-report-service';
 import { WorkspaceRepository } from './lib/data/workspace-repository';
 import type { AnalyzerRuleCatalog } from './lib/analysis/log-analyzer';
 import type { AppBackendContext } from '../../../sdk/app-contract';
@@ -33,6 +34,7 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
   const tasks = new AnalysisTaskService(repository, { notify: (notification) => context.showNotification(notification) });
   const monitor = new MonitorDirectoryService(repository, analysis, tasks);
   const deletion = new LifecycleDeletionService(repository);
+  const sysinfoReports = new SysinfoReportService();
   const pendingDeletions = new Map<string, PendingDeletion>();
   const emitChanged = () => context.emit('tasks.changed', { tasks: repository.listTasks() });
   const emitPackagesChanged = () => context.emit('packages.changed', {});
@@ -82,6 +84,7 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
         case 'reports.path': return getPackage(readString(payload, 'packageId')).reportPath ?? null;
         case 'results.get': return repository.getAnalysisResult(readString(payload, 'packageId')) ?? null;
         case 'results.recent': return repository.listRecentAnalysisResults();
+        case 'results.sysinfo-report-path': return sysinfoReports.getReportPath(getPackage(readString(payload, 'packageId')));
         case 'results.html': {
           const path = getPackage(readString(payload, 'packageId')).reportPath;
           if (!path) throw new Error('该诊断包尚未生成浏览器呈现文件。');

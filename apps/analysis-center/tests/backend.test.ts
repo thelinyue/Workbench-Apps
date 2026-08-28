@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -26,5 +26,29 @@ describe('分析中心 backend Worker', () => {
 
     await expect(readFile(join(dataDirectory, 'analysis-center.db'))).resolves.toBeDefined();
     await expect(readFile(join(dataDirectory, 'workbench.db'))).rejects.toThrow();
+  });
+
+  it('仅按 packageId 从私有记录生成完整 sysinfo 报告，不接受伪造源路径', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-backend-'));
+    directories.push(dataDirectory);
+    const sourcePath = join(dataDirectory, 'history.tgz');
+    const forgedPath = join(dataDirectory, 'forged-sysinfo.json');
+    await writeFile(sourcePath, 'archive-placeholder', 'utf8');
+    await writeFile(forgedPath, JSON.stringify({ deviceName: 'Forged device' }), 'utf8');
+    const backend = createAppBackend({ appId: 'analysis-center', dataDirectory, manifest: {}, emit: () => undefined, showNotification: () => undefined });
+
+    try {
+      const diagnosticPackage = await backend.invoke('packages.import', { sourcePath }) as { id: string; extractPath: string };
+      await mkdir(join(diagnosticPackage.extractPath, 'diag'), { recursive: true });
+      await writeFile(join(diagnosticPackage.extractPath, 'diag', 'sysinfo.json'), JSON.stringify({ deviceName: 'Trusted device' }), 'utf8');
+
+      const reportPath = await backend.invoke('results.sysinfo-report-path', { packageId: diagnosticPackage.id, sourcePath: forgedPath }) as string;
+      expect(reportPath).toBe(join(diagnosticPackage.extractPath, 'sysinfo-report.html'));
+      await expect(readFile(reportPath, 'utf8')).resolves.toContain('Trusted device');
+      await expect(readFile(reportPath, 'utf8')).resolves.not.toContain('Forged device');
+      await expect(backend.invoke('results.sysinfo-report-path', { packageId: 'missing-package' })).rejects.toThrow('找不到指定的诊断包');
+    } finally {
+      await backend.close();
+    }
   });
 });

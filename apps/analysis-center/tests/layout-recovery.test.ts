@@ -45,6 +45,10 @@ describe('分析中心 V1 工作区', () => {
     expect(viewSource).toContain('aria-label="打开结果更多操作"');
     expect(viewSource).toContain('定位原始诊断包');
     expect(styleSource).toContain('.result-evidence-panel');
+    expect(viewSource).toContain('查看完整 sysinfo');
+    expect(viewSource).toContain('sysinfoReportLoading ? \'生成中\' : \'查看完整 sysinfo\'');
+    expect(viewSource).toContain('disabled={sysinfoReportLoading}');
+    expect(styleSource).toContain('.sysinfo-report-button { min-width: 142px;');
   });
 
   it('使用 1100px 产品边界在固定证据栏和覆盖式 Drawer 之间切换', () => {
