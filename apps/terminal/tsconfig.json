@@ -1,1 +1,1 @@
-{"extends":"../../tsconfig.json","compilerOptions":{"noEmit":true,"rootDir":"../.."},"include":["backend/**/*.ts","renderer/**/*.ts","renderer/**/*.tsx","../../sdk/app-contract.ts"]}
+{"extends":"../../tsconfig.json","compilerOptions":{"noEmit":true,"rootDir":"../.."},"include":["backend/**/*.ts","renderer/**/*.ts","renderer/**/*.tsx","shared/**/*.ts","../../sdk/app-contract.ts"]}

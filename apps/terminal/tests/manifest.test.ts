@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('SSH 终端应用 manifest', () => {
-  it('声明独立运行时和受限的 SSH 凭据能力', () => {
+  it('声明 2.0 独立窗口、兼容门槛和所需最小宿主能力', () => {
     const manifestPath = resolve(process.cwd(), 'apps/terminal/manifest.json');
 
     expect(existsSync(manifestPath)).toBe(true);
@@ -11,8 +11,14 @@ describe('SSH 终端应用 manifest', () => {
     expect(manifest).toMatchObject({
       schemaVersion: 1,
       id: 'terminal',
+      version: '2.0.0',
+      minWorkbenchVersion: '0.1.6',
+      window: {
+        defaultSize: { width: 1440, height: 900 },
+        minSize: { width: 960, height: 640 }
+      },
       runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' },
-      capabilities: ['ssh.credentials']
+      capabilities: ['ssh.credentials', 'file.open', 'file.save']
     });
   });
 });

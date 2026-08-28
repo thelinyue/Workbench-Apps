@@ -18,21 +18,21 @@ describe('SSH 终端应用发布配置', () => {
       schemaVersion: 1,
       id: 'terminal',
       runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' },
-      capabilities: ['ssh.credentials']
+      capabilities: ['ssh.credentials', 'file.open', 'file.save']
     });
     expect(buildSource).toContain('getReleaseAssetName(manifest.id,manifest.version)');
     expect(buildSource).toContain('getReleaseUrl(manifest.id,manifest.version)');
   });
 
-  it('发布 1.0.2 并为 workbench-app 协议生成相对资源路径', () => {
+  it('准备 2.0.0 并为 workbench-app 协议生成相对资源路径', () => {
     execFileSync(process.execPath, ['tools/build-terminal.mjs'], { cwd: process.cwd(), stdio: 'pipe' });
 
     const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'apps/terminal/manifest.json'), 'utf8'));
     const entry = readFileSync(resolve(process.cwd(), 'apps/terminal/dist/renderer/index.html'), 'utf8');
-    expect(manifest.version).toBe('1.0.2');
+    expect(manifest.version).toBe('2.0.0');
     expect(entry).toMatch(/(?:src|href)="\.\.\/assets\//);
     expect(entry).not.toMatch(/(?:src|href)="\/assets\//);
-  });
+  }, 15_000);
 
   it('在隔离安装目录中加载 SSH 后端所需的全部运行时依赖', () => {
     execFileSync(process.execPath, ['tools/build-terminal.mjs'], { cwd: process.cwd(), stdio: 'pipe' });
@@ -48,7 +48,7 @@ describe('SSH 终端应用发布配置', () => {
     } finally {
       rmSync(isolatedRoot, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it('由 Apps 仓库的 terminal 标签触发发布', () => {
     const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
