@@ -204,7 +204,7 @@ describe('V1 统一诊断分析', () => {
 
     expect(unavailable.diagnoses).toEqual(expect.arrayContaining([expect.objectContaining({
       id: 'storage.device.unrecognized',
-      userConclusion: '您好，经分析诊断日志，硬盘当前未被系统识别，可能存在硬盘接触或槽位异常。请先关机后重新插拔硬盘，或更换其他硬盘槽位接入后再观察。'
+      userConclusion: '您好，经分析诊断日志，硬盘 1 当前未被系统识别，可能存在硬盘接触或槽位异常。请关机后重新拔插硬盘 1；如仍未识别，请更换其他硬盘槽位接入对比，以判断是硬盘故障还是槽位异常。'
     })]));
     expect(timeout.diagnoses).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'storage.device.unrecognized' })]));
   });
@@ -219,6 +219,60 @@ describe('V1 统一诊断分析', () => {
     });
 
     expect(result.diagnoses.find((item) => item.id === 'storage.device.unrecognized')?.userConclusion).toContain('硬盘 4 当前未被系统识别');
+  });
+
+  it('将真实硬盘 2 掉盘、设备数不一致与 RAID 缺失成员合并为关机换槽对比结论', async () => {
+    const fixture = new URL('./fixtures/disk2-dropout-raid-degraded/', import.meta.url);
+    const names = ['journal-5days.log', 'mdstat.log', 'ugvolume.log', 'sysinfo.json'];
+    const files = Object.fromEntries(await Promise.all(names.map(async (name) => [name, await readFile(new URL(name, fixture), 'utf8')])));
+    const result = analyzeV1Sources({ sourceName: 'diag_EC671JJ172407493_202608281825.tgz', files });
+
+    expect(result.diagnoses[0]).toEqual(expect.objectContaining({
+      id: 'storage.device.unrecognized',
+      title: '硬盘 2 掉盘且 RAID 已降级',
+      summary: '硬盘 2 掉盘且 RAID 已降级。',
+      primaryResource: 'ata2',
+      affectedResources: expect.arrayContaining(['ata2', 'md1']),
+      userConclusion: '您好，经分析诊断日志，硬盘 2 掉盘且 RAID 已降级。请关机后重新拔插硬盘 2；如仍未识别，请更换其他硬盘槽位接入对比，以判断是硬盘故障还是槽位异常。'
+    }));
+    expect(result.diagnoses[0].userConclusion).not.toContain('备份');
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'storage.io_error:/dev/sdb', occurrenceCount: 2 }),
+      expect.objectContaining({ id: 'storage.device_count_mismatch:system' }),
+      expect.objectContaining({ id: 'raid.degraded:md1' })
+    ]));
+    expect(result.diagnoses[0].affectedResources).not.toContain('/dev/sdb');
+    expect(result.diagnoses[0].userConclusion).not.toContain('硬盘 3');
+  });
+
+  it('不把网卡 Link Down 和 smartd 数据库缺项误判为硬盘掉盘', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'non-storage-link-events.tgz',
+      files: {
+        'journal-5days.log': [
+          'Aug 28 17:38:00 host kernel: igc 0000:02:00.0 eth1: NIC Link is Down',
+          'Aug 28 17:38:01 host smartd[100]: Device: /dev/sda [SAT], not found in smartd database'
+        ].join('\n')
+      }
+    });
+
+    expect(result.findings).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'storage.device_unrecognized' })
+    ]));
+    expect(result.diagnoses).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'storage.device.unrecognized' })
+    ]));
+  });
+
+  it('SATA 槽位数与块设备数相等时不生成数量不一致 Finding', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'matching-device-count.tgz',
+      files: { 'ugvolume.log': 'got 4 sataOnCount and 4 sdCount' }
+    });
+
+    expect(result.findings).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'storage.device_count_mismatch' })
+    ]));
   });
 
   it('把 sysinfo 硬盘身份写入结果，并生成可发送给用户和工程师的结论', () => {

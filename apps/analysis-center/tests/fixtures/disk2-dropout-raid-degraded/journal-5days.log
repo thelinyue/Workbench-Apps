@@ -1,0 +1,8 @@
+2024-10-07T08:33:47.951752+08:00 localhost kernel: ata1: SATA link down (SStatus 0 SControl 300)
+Aug 28 17:40:48 DXP4800-7493 kernel: sd 1:0:0:0: [sdb] tag#27 FAILED Result: hostbyte=DID_BAD_TARGET driverbyte=DRIVER_OK cmd_age=0s
+Aug 28 17:40:48 DXP4800-7493 kernel: I/O error, dev sdb, sector 0 op 0x0:(READ) flags 0x0 phys_seg 2 prio class 0
+Aug 28 17:40:48 DXP4800-7493 kernel: I/O error, dev sdb, sector 2048 op 0x0:(READ) flags 0x0 phys_seg 2 prio class 0
+Aug 28 17:42:51 DXP4800-7493 kernel: ata1: SATA link up 6.0 Gbps (SStatus 133 SControl 300)
+Aug 28 17:42:51 DXP4800-7493 kernel: ata2: SATA link down (SStatus 0 SControl 300)
+Aug 28 17:42:51 DXP4800-7493 kernel: ata3: SATA link up 6.0 Gbps (SStatus 133 SControl 300)
+Aug 28 17:42:51 DXP4800-7493 kernel: ata4: SATA link up 6.0 Gbps (SStatus 133 SControl 300)

@@ -15,7 +15,7 @@ export interface Diagnosis { id: string; category: string; severity: Severity; c
 export interface AnalysisResult { schemaVersion: 1; id: string; status: 'completed' | 'partial'; summary: { criticalCount: number; warningCount: number; infoCount: number; primaryDiagnosisId?: string; complete: boolean }; diagnoses: Diagnosis[]; findings: Finding[]; evidence: Evidence[]; deviceAssessments: DeviceAssessment[]; recommendations: Recommendation[]; metadata: { source: string; startTime: string; completeTime: string; duration: number; processedFiles: number; processedLines: number; processedEvents: number; analyzerVersion: string; rulePackVersion: string; missingData: string[] }; }
 
 interface DeviceIdentity { resource: string; label?: string; model?: string; serial?: string; slot?: string; usedFor?: string; }
-interface RaidAssessment { resource: string; level?: string; expectedMembers?: number; activeMembers?: number; degraded: boolean; }
+interface RaidAssessment { resource: string; level?: string; expectedMembers?: number; activeMembers?: number; missingMemberIndexes?: number[]; degraded: boolean; }
 
 const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume'])), regex: z.string(), type: z.string() })) });
 const rulePack = rulePackSchema.parse(rulePackJson);
@@ -75,7 +75,8 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
           const match = rule.pattern.exec(line);
           if (!match || emittedTypes.has(rule.type)) continue;
           const device = match.groups?.device;
-          const resource = device ? `/dev/${device.replace(/\d+$/, '')}` : source === 'ugvolume' && rule.type === 'filesystem.error' ? poolFromMountLine(line) : undefined;
+          const slot = match.groups?.slot;
+          const resource = slot?.toLowerCase() ?? (device ? `/dev/${device.replace(/\d+$/, '')}` : source === 'ugvolume' && rule.type === 'filesystem.error' ? poolFromMountLine(line) : undefined);
           add(rule.id, rule.type, sourceFile, line, lineNumber, resource);
           emittedTypes.add(rule.type);
         }
@@ -178,16 +179,18 @@ function parseMdstatLine(line: string, file: string, lineNumber: number, add: (r
   if (!assessment) return;
   assessment.expectedMembers = Number(status[1]);
   assessment.activeMembers = Number(status[2]);
+  assessment.missingMemberIndexes = [...status[3]].flatMap((state, index) => state === '_' ? [index] : []);
   assessment.degraded ||= assessment.activeMembers < assessment.expectedMembers || status[3].includes('_');
   if (assessment.degraded) add('raid.array.degraded', 'raid.degraded', file, line, lineNumber, assessment.resource);
 }
 function parseTopology(line: string, topology: Map<string, string[]>): void { const match = line.match(/pool\[([^\]]+)\].*\/dev\/(md\d+)/i); if (match) topology.set(match[2], [...new Set([...(topology.get(match[2]) ?? []), match[1]])]); const mount = line.match(/pool(\d+)-[^,\s]+.*mntPath:?(\/volume\d+)/i); if (mount) { const pool = `pool${mount[1]}`; topology.set(pool, [...new Set([...(topology.get(pool) ?? []), mount[2]])]); } }
 function poolFromMountLine(line: string): string | undefined { const match = line.match(/pool(\d+)-/i); return match ? `pool${match[1]}` : undefined; }
 function aggregateFindings(events: NormalizedEvent[], evidence: Evidence[], topology: Map<string, string[]>): Finding[] { const groups = new Map<string, NormalizedEvent[]>(); for (const event of events) { const key = `${event.type}:${event.resource ?? 'system'}`; groups.set(key, [...(groups.get(key) ?? []), event]); } return [...groups.entries()].map(([key, grouped]) => { const event = grouped[0]; const resource = event.resource; const extra = resource ? topology.get(resource) ?? [] : []; const title = titleFor(event.type, resource); return { id: key, type: event.type, category: event.type.split('.')[0], severity: severityFor(event.type), confidence: event.type.startsWith('raid.') ? 'confirmed' : event.type === 'storage.smart_risk' ? 'high' : 'medium', title, summary: `${title}，共 ${grouped.length} 次。`, affectedResources: [...new Set([...(resource ? [resource] : []), ...extra])], evidenceIds: grouped.map((item) => item.evidenceId), firstSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort()[0], lastSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort().at(-1), occurrenceCount: grouped.length }; }); }
-function titleFor(type: string, resource?: string): string { const names: Record<string, string> = { 'storage.io_error': '检测到块设备 I/O 错误', 'storage.smart_risk': '检测到 SMART 介质风险指标', 'raid.member_failed': 'RAID 成员已失败', 'raid.degraded': 'RAID 阵列已降级', 'filesystem.error': '检测到文件系统错误', 'system.unclean_shutdown': '检测到异常关机线索', 'system.kernel_panic': '检测到 Kernel Panic', 'system.oom': '检测到内存耗尽', 'system.oom_killer': '检测到 OOM Killer', 'system.watchdog': '检测到 Watchdog 锁死' }; return `${resource ? `${resource} ` : ''}${names[type] ?? type}`; }
+function titleFor(type: string, resource?: string): string { const names: Record<string, string> = { 'storage.io_error': '检测到块设备 I/O 错误', 'storage.smart_risk': '检测到 SMART 介质风险指标', 'storage.device_count_mismatch': '检测到 SATA 槽位与块设备数量不一致', 'raid.member_failed': 'RAID 成员已失败', 'raid.degraded': 'RAID 阵列已降级', 'filesystem.error': '检测到文件系统错误', 'system.unclean_shutdown': '检测到异常关机线索', 'system.kernel_panic': '检测到 Kernel Panic', 'system.oom': '检测到内存耗尽', 'system.oom_killer': '检测到 OOM Killer', 'system.watchdog': '检测到 Watchdog 锁死' }; return `${resource ? `${resource} ` : ''}${names[type] ?? type}`; }
 function severityFor(type: string): Severity { return type.startsWith('raid.') || type === 'system.kernel_panic' || type === 'system.watchdog' ? 'critical' : type.startsWith('storage.') || type.startsWith('filesystem.') || type.startsWith('system.') ? 'warning' : 'info'; }
 function localizeDeviceLabel(label: string | undefined, resource: string): string { if (!label) return resource; const m2 = label.match(/^M\.2\s+Hard Drive\s+(\d+)$/i); if (m2) return `M.2 硬盘 ${m2[1]}`; const disk = label.match(/^Hard Drive\s+(\d+)$/i); return disk ? `硬盘 ${disk[1]}` : label; }
 function localizeUsage(usage: string | undefined): string { return usage?.replace(/^Storage Pool\s+(\d+)$/i, '存储池 $1') ?? '日志未提供'; }
+function dropoutAction(deviceName: string): string { return `请关机后重新拔插${deviceName}；如仍未识别，请更换其他硬盘槽位接入对比，以判断是硬盘故障还是槽位异常。`; }
 /** 用户结论只转换已确认的设备、阵列事实，不让用户重复执行已经完成的诊断检查。 */
 function buildUserConclusion(devices: DeviceAssessment[], deviceArrays: Map<string, string[]>, raidAssessments: Map<string, RaidAssessment>): string {
   const orderedDevices = [...devices].sort((left, right) => localizeDeviceLabel(left.label, left.resource).localeCompare(localizeDeviceLabel(right.label, right.resource), 'zh-CN', { numeric: true }));
@@ -296,11 +299,41 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
   if (filesystemPools.length > 0 && filesystemDevices.length > 0 && !hasDiskFault && filesystemDevices.every((device) => !device.smartRiskAttributes.length && device.ioErrorCount === 0)) {
     diagnoses.push({ id: 'filesystem.storage.repair', category: 'filesystem', severity: 'warning', confidence: 'high', title: '存储空间文件系统异常', summary: '关联存储池下的存储空间文件系统出现错误，需由工程师远程修复。', affectedResources: [...new Set(filesystemPools)], findingIds: findings.filter((finding) => finding.type === 'filesystem.error').map((finding) => finding.id), recommendationIds: [], userConclusion: '您好，经分析诊断日志，当前硬盘健康信息正常，但存储池下的存储空间文件系统存在异常，需要给您修复文件系统。' });
   }
-  const missingDeviceFinding = findings.find((finding) => finding.type === 'storage.device_unrecognized');
+  const knownSlots = new Set(deviceAssessments.map((device) => device.slot?.toLowerCase()).filter((slot): slot is string => Boolean(slot)));
+  const missingAtaFindings = findings.filter((finding) => finding.type === 'storage.device_unrecognized' && finding.affectedResources.some((value) => /^ata\d+$/i.test(value) && !knownSlots.has(value.toLowerCase())));
+  const degradedRaidForFinding = (finding: Finding): RaidAssessment | undefined => {
+    const slotNumber = finding.affectedResources.find((value) => /^ata\d+$/i.test(value))?.match(/^ata(\d+)$/i)?.[1];
+    return slotNumber
+      ? [...raidAssessments.values()].find((raid) => raid.degraded && raid.missingMemberIndexes?.includes(Number(slotNumber) - 1))
+      : undefined;
+  };
+  // 当前仍出现在 sysinfo 中的槽位可能只是历史启动阶段短暂 link down，不能覆盖真正的缺失成员。
+  const missingDeviceFinding = missingAtaFindings.find((finding) => degradedRaidForFinding(finding))
+    ?? missingAtaFindings[0]
+    ?? findings.find((finding) => finding.type === 'storage.device_unrecognized' && finding.affectedResources.some((value) => value.startsWith('/dev/')));
   if (missingDeviceFinding) {
-    const resource = missingDeviceFinding.affectedResources.find((value) => value.startsWith('/dev/'));
-    const deviceName = resource ? localizeDeviceLabel(deviceByResource.get(resource)?.label, resource) : '硬盘';
-    diagnoses.unshift({ id: 'storage.device.unrecognized', category: 'storage', severity: 'critical', confidence: 'confirmed', title: '硬盘未被系统识别', summary: '日志记录到硬盘链路或识别异常。', primaryResource: resource, affectedResources: missingDeviceFinding.affectedResources, findingIds: [missingDeviceFinding.id], recommendationIds: [], userConclusion: `您好，经分析诊断日志，${deviceName === '硬盘' ? deviceName : `${deviceName} `}当前未被系统识别，可能存在硬盘接触或槽位异常。请先关机后重新插拔硬盘，或更换其他硬盘槽位接入后再观察。` });
+    const resource = missingDeviceFinding.affectedResources.find((value) => /^ata\d+$/i.test(value) || value.startsWith('/dev/'));
+    const slotNumber = resource?.match(/^ata(\d+)$/i)?.[1];
+    const knownDevice = resource?.startsWith('/dev/')
+      ? deviceByResource.get(resource)
+      : deviceAssessments.find((device) => device.slot?.toLowerCase() === resource?.toLowerCase());
+    const deviceName = knownDevice ? localizeDeviceLabel(knownDevice.label, knownDevice.resource) : slotNumber ? `硬盘 ${slotNumber}` : '硬盘';
+    // mdstat 的状态字符与成员下标一一对应；只在 ata 槽位编号命中同一缺口时关联降级阵列。
+    const degradedRaid = degradedRaidForFinding(missingDeviceFinding);
+    if (degradedRaid && resource) {
+      const raidFinding = findings.find((finding) => finding.type === 'raid.degraded' && finding.affectedResources.includes(degradedRaid.resource));
+      const countMismatchFinding = findings.find((finding) => finding.type === 'storage.device_count_mismatch');
+      const findingIds = [missingDeviceFinding.id, raidFinding?.id, countMismatchFinding?.id].filter((id): id is string => Boolean(id));
+      const conclusion = `${deviceName} 掉盘且 RAID 已降级。`;
+      diagnoses.unshift({
+        id: 'storage.device.unrecognized', category: 'storage', severity: 'critical', confidence: 'confirmed',
+        title: `${deviceName} 掉盘且 RAID 已降级`, summary: conclusion, primaryResource: resource,
+        affectedResources: [resource, degradedRaid.resource], findingIds, recommendationIds: [],
+        userConclusion: `您好，经分析诊断日志，${conclusion}${dropoutAction(deviceName)}`
+      });
+    } else {
+      diagnoses.unshift({ id: 'storage.device.unrecognized', category: 'storage', severity: 'critical', confidence: 'confirmed', title: '硬盘未被系统识别', summary: '日志记录到硬盘链路或识别异常。', primaryResource: resource, affectedResources: missingDeviceFinding.affectedResources, findingIds: [missingDeviceFinding.id], recommendationIds: [], userConclusion: `您好，经分析诊断日志，${deviceName === '硬盘' ? deviceName : `${deviceName} `}当前未被系统识别，可能存在硬盘接触或槽位异常。${dropoutAction(deviceName)}` });
+    }
   }
   if (!diagnoses.length) { const raid = findings.find((finding) => finding.type === 'raid.degraded'); if (raid) diagnoses.push({ id: 'raid.array.degraded', category: 'raid', severity: 'critical', confidence: 'confirmed', title: `${raid.affectedResources[0] ?? 'RAID'} 已降级`, summary: '阵列状态异常，需要确认冗余与成员状态。', primaryResource: raid.affectedResources[0], affectedResources: raid.affectedResources, findingIds: [raid.id], recommendationIds: [] }); }
   return { diagnoses, recommendations: recommendations.sort((left, right) => left.priority - right.priority) }; }

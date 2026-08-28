@@ -1,0 +1,9 @@
+{
+  "disk": {
+    "devices": [
+      { "disk_info": { "label": "Hard Drive 1", "slot": "ata1", "dev_name": "/dev/sda", "serial": "ZW61TMGS", "used_for": "Storage Pool 1" } },
+      { "disk_info": { "label": "Hard Drive 3", "slot": "ata3", "dev_name": "/dev/sdb", "serial": "ZW61RDK9", "used_for": "Storage Pool 1" } },
+      { "disk_info": { "label": "Hard Drive 4", "slot": "ata4", "dev_name": "/dev/sdc", "serial": "ZW61V5FP", "used_for": "Storage Pool 1" } }
+    ]
+  }
+}
