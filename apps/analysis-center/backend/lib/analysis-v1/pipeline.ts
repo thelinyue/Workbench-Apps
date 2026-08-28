@@ -190,23 +190,37 @@ function localizeDeviceLabel(label: string | undefined, resource: string): strin
 function localizeUsage(usage: string | undefined): string { return usage?.replace(/^Storage Pool\s+(\d+)$/i, '存储池 $1') ?? '日志未提供'; }
 /** 用户结论只转换已确认的设备、阵列事实，不让用户重复执行已经完成的诊断检查。 */
 function buildUserConclusion(devices: DeviceAssessment[], deviceArrays: Map<string, string[]>, raidAssessments: Map<string, RaidAssessment>): string {
-  const deviceLines = devices.map((device) => {
+  const orderedDevices = [...devices].sort((left, right) => localizeDeviceLabel(left.label, left.resource).localeCompare(localizeDeviceLabel(right.label, right.resource), 'zh-CN', { numeric: true }));
+  const deviceLines = orderedDevices.map((device) => {
     const facts = [device.ioErrorCount > 0 ? '检测到多次读写错误（I/O Error）' : '', device.smartRiskAttributes.length ? '硬盘健康信息存在异常' : ''].filter(Boolean);
     return `${localizeDeviceLabel(device.label, device.resource)}（序列号：${device.serial ?? '日志未提供'}）：${facts.join('；')}。`;
   });
-  const arrays = [...new Set(devices.flatMap((device) => deviceArrays.get(device.resource) ?? []))];
-  const raidLines = arrays.map((array) => raidRiskMessage(raidAssessments.get(array))).filter((value): value is string => Boolean(value));
+  const arrays = [...new Set(orderedDevices.flatMap((device) => deviceArrays.get(device.resource) ?? []))];
+  const raidLines = arrays.map((array) => {
+    const affectedDevices = orderedDevices.filter((device) => (deviceArrays.get(device.resource) ?? []).includes(array));
+    return raidRiskMessage(raidAssessments.get(array), array, affectedDevices);
+  }).filter((value): value is string => Boolean(value));
   const conclusion = devices.length === 1 ? '该硬盘存在较高故障风险。' : '以上硬盘均存在较高故障风险。';
   return ['您好，经分析诊断日志，发现 ' + `${devices.length} 块硬盘存在异常：`, deviceLines.join('\n'), raidLines.join('\n'), `综合当前日志信息，${conclusion}建议您尽快备份存储池中的重要数据，并及时更换异常硬盘。`].filter(Boolean).join('\n\n');
 }
 
-/** RAID 10 的多盘容错依赖镜像组位置，因此仅说明降级事实，不按成员数量承诺数据安全。 */
-function raidRiskMessage(raid: RaidAssessment | undefined): string | undefined {
+/**
+ * RAID 风险按阵列标识生成，每个阵列只输出一次。used_for 只用于补充用户可识别的存储池名称，
+ * 阵列成员关系仍以 mdstat 为准；RAID 1 同阵列有多块异常盘时必须提升为立即备份提示。
+ */
+function raidRiskMessage(raid: RaidAssessment | undefined, array: string, devices: DeviceAssessment[]): string | undefined {
   if (!raid?.level) return undefined;
   const level = raid.level.toLowerCase();
   if (level === 'raid0') return 'RAID 0 无冗余，一块硬盘故障可能导致整个阵列数据不可用，请立即备份数据。';
   if (level === 'linear' || level === 'jbod') return 'JBOD 无冗余，故障硬盘上的数据可能无法访问，请立即备份数据。';
-  if (level === 'raid1') return 'RAID 1 已降级，当前冗余降低，请尽快备份并更换故障硬盘。';
+  if (level === 'raid1') {
+    const storagePools = [...new Set(devices.map((device) => device.usedFor).filter((value): value is string => Boolean(value)))];
+    const context = `${storagePools.length === 1 ? `${localizeUsage(storagePools[0])} 的 ` : ''}RAID 1（${array}）`;
+    const deviceNames = devices.map((device) => localizeDeviceLabel(device.label, device.resource)).join('、');
+    if (devices.length >= 2 && storagePools.length <= 1) return `${context}中，${deviceNames} 均存在异常，阵列数据处于高风险，请立即备份重要数据并尽快更换故障硬盘。`;
+    if (raid.degraded) return `${context}已降级，${deviceNames || '成员硬盘'} 存在异常，当前冗余降低，请尽快备份重要数据并更换故障硬盘。`;
+    return `${context}关联的${deviceNames || '成员硬盘'} 存在异常，请尽快备份重要数据并检查阵列状态。`;
+  }
   if (level === 'raid5') return 'RAID 5 已失去冗余，再有一块硬盘故障可能导致数据不可用，请立即备份。';
   if (level === 'raid6') return 'RAID 6 冗余能力已降低，请尽快备份并更换故障硬盘。';
   if (level === 'raid10') return 'RAID 10 已降级，请尽快备份并更换故障硬盘。';

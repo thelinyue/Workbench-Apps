@@ -129,8 +129,32 @@ describe('V1 统一诊断分析', () => {
     expect(reply!.indexOf('硬盘 3')).toBeLessThan(reply!.indexOf('RAID 0'));
   });
 
+  it('同一存储池的 RAID 1 有两块异常成员时只提示一次并要求立即备份', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'raid1-two-failed-disks.tgz',
+      files: {
+        'mdstat.log': [
+          'md4 : active raid1 sdd2[0]',
+          '      100 blocks [1/1] [U]',
+          'md1 : active raid1 sdb2[0](F) sda2[1]',
+          '      100 blocks [2/1] [_U]'
+        ].join('\n'),
+        'sysinfo.json': JSON.stringify({ disk: { devices: [
+          { disk_info: { dev_name: '/dev/sda', label: 'Hard Drive 1', serial: 'SERIAL-001', used_for: 'Storage Pool 1' }, smart_info: { report: [{ id: 5, name: 'Reallocated_Sector_Ct', raw: 480 }] } },
+          { disk_info: { dev_name: '/dev/sdb', label: 'Hard Drive 2', serial: 'SERIAL-002', used_for: 'Storage Pool 1' }, smart_info: { report: [{ id: 197, name: 'Current_Pending_Sector', raw: 680 }] } },
+          { disk_info: { dev_name: '/dev/sdd', label: 'Hard Drive 4', serial: 'SERIAL-004', used_for: 'Storage Pool 3' }, smart_info: { report: [{ id: 5, name: 'Reallocated_Sector_Ct', raw: 3 }] } }
+        ] } })
+      }
+    });
+
+    const reply = result.diagnoses.find((item) => item.id === 'storage.multiple_devices.failure_suspected')?.userConclusion ?? '';
+    const highRiskMessage = '存储池 1 的 RAID 1（md1）中，硬盘 1、硬盘 2 均存在异常，阵列数据处于高风险，请立即备份重要数据并尽快更换故障硬盘。';
+    expect(reply.split(highRiskMessage)).toHaveLength(2);
+    expect(reply).not.toContain('RAID 1 已降级，当前冗余降低');
+  });
+
   it.each([
-    ['raid1', 'RAID 1 已降级，当前冗余降低，请尽快备份并更换故障硬盘。'],
+    ['raid1', 'RAID 1（md0）已降级，硬盘 1 存在异常，当前冗余降低，请尽快备份重要数据并更换故障硬盘。'],
     ['raid5', 'RAID 5 已失去冗余，再有一块硬盘故障可能导致数据不可用，请立即备份。'],
     ['raid6', 'RAID 6 冗余能力已降低，请尽快备份并更换故障硬盘。'],
     ['raid10', 'RAID 10 已降级，请尽快备份并更换故障硬盘。'],
