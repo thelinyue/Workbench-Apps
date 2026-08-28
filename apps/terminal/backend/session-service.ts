@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'ssh2';
 import type { ConnectionTarget, SessionSummary } from '../shared/types';
-import { AutoRootController } from './auto-root-controller';
+import { AutoRootController, buildAutoRootCommand } from './auto-root-controller';
 import { ShellIntegrationService } from './shell-integration-service';
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -17,6 +17,7 @@ export interface SessionStream {
 export interface SessionClient {
   on(event: 'ready' | 'error', listener: (...args: any[]) => void): this;
   connect(options: Record<string, unknown>): this;
+  exec?(command: string, options: { pty: boolean }, callback: (error: Error | undefined, stream: SessionStream) => void): this;
   shell(callback: (error: Error | undefined, stream: SessionStream) => void): this;
   sftp?(callback: (error: Error | undefined, channel?: unknown) => void): this;
   end(): unknown;
@@ -63,10 +64,7 @@ export class SessionService {
     this.createClient = options.createClient ?? (() => new Client() as unknown as SessionClient);
     this.readPrivateKey = options.readPrivateKey ?? ((path) => readFile(path));
     this.createMarker = options.createMarker ?? randomUUID;
-    this.shellIntegration = new ShellIntegrationService({
-      createMarker: this.createMarker,
-      emit: (event, payload) => this.handleIntegrationEvent(event, payload)
-    });
+    this.shellIntegration = new ShellIntegrationService({ emit: (event, payload) => this.handleIntegrationEvent(event, payload) });
   }
 
   public async connect(input: ConnectSessionInput): Promise<{ id: string }> {
@@ -109,24 +107,8 @@ export class SessionService {
 
     client.on('ready', () => {
       if (record.client !== client) return;
-      client.shell((error, stream) => {
-        if (record.client !== client) return;
-        if (error) { this.fail(record, `无法创建交互终端：${error.message}`); return; }
-        record.stream = stream;
-        record.summary = { ...record.summary, state: 'connected', message: undefined };
-        stream.on('data', (chunk: Buffer | string) => this.handleData(record, chunk));
-        stream.on('close', () => {
-          if (this.sessions.get(record.summary.id) !== record || record.stream !== stream) return;
-          record.stream = undefined;
-          this.shellIntegration.close(record.summary.id);
-          this.options.onSessionUnavailable?.(record.summary.id);
-          record.summary = { ...record.summary, state: 'disconnected', message: 'SSH 会话已关闭。' };
-          this.emitState(record);
-        });
-        this.emitState(record);
-        this.options.emit('session.ready', { ...record.summary });
-        this.startInteractiveFeatures(record);
-      });
+      if (record.summary.profile.autoRoot) this.openAutoRootStream(record, client);
+      else this.openUserStream(record, client);
     });
     client.on('error', (error: Error) => {
       if (record.client === client) this.fail(record, `SSH 连接失败：${error.message}`);
@@ -246,37 +228,92 @@ export class SessionService {
     this.options.emit('session.data', { id: record.summary.id, data: bytes.toString('utf8') });
   }
 
-  private startInteractiveFeatures(record: SessionRecord): void {
-    if (!record.stream) return;
-    if (!record.summary.profile.autoRoot) {
-      this.startShellIntegration(record);
-      return;
-    }
+  /**
+   * 通过 SSH exec 请求直接创建 sudo 登录 PTY，命令不会写入普通用户终端的 stdin。
+   * 密码仍只在 sudo 的随机 OSC 提示出现后发送；认证失败则关闭该 PTY 并创建普通用户 shell。
+   */
+  private openAutoRootStream(record: SessionRecord, client: SessionClient): void {
     const sudoSecret = record.sudoSecret ?? (record.summary.profile.auth === 'password' ? record.secret : undefined);
     if (!sudoSecret) {
-      this.autoRootFailed(record, '自动切换 root 已跳过：缺少 sudo 密码。已保留普通用户会话。');
+      this.fallbackFromAutoRoot(record, client, '自动切换 root 已跳过：缺少 sudo 密码。已保留普通用户会话。');
       return;
     }
-    record.autoRoot = new AutoRootController({
-      marker: this.createMarker(),
-      secret: sudoSecret,
-      write: (data) => record.stream?.write(data),
-      onReady: (shell) => {
-        record.autoRoot = undefined;
-        if (record.summary.profile.shellIntegration === false || !record.stream) return;
-        this.shellIntegration.install(record.summary.id, shell, record.stream);
-      },
-      onFailure: (message) => this.autoRootFailed(record, message)
+    if (!client.exec) {
+      this.fallbackFromAutoRoot(record, client, '当前 SSH 客户端不支持独立 root PTY，已保留普通用户会话。');
+      return;
+    }
+    const marker = this.createMarker();
+    client.exec(buildAutoRootCommand(marker), { pty: true }, (error, stream) => {
+      if (record.client !== client) return;
+      if (error) {
+        this.fallbackFromAutoRoot(record, client, `无法创建 root 终端：${error.message}。已保留普通用户会话。`);
+        return;
+      }
+      let ready = false;
+      record.stream = stream;
+      record.autoRoot = new AutoRootController({
+        marker,
+        secret: sudoSecret,
+        write: (data) => { if (record.stream === stream) stream.write(data); },
+        onReady: () => {
+          if (record.stream !== stream) return;
+          ready = true;
+          record.autoRoot = undefined;
+          this.activateStream(record, stream);
+        },
+        onFailure: (message) => {
+          if (record.stream !== stream) return;
+          this.fallbackFromAutoRoot(record, client, message, stream);
+        }
+      });
+      stream.on('data', (chunk: Buffer | string) => this.handleData(record, chunk));
+      stream.on('close', () => {
+        if (this.sessions.get(record.summary.id) !== record || record.stream !== stream) return;
+        if (!ready) {
+          this.fallbackFromAutoRoot(record, client, 'root 终端在启动前已关闭，已保留普通用户会话。', stream);
+          return;
+        }
+        this.handleStreamClose(record, stream);
+      });
     });
-    record.autoRoot.start();
   }
 
-  private autoRootFailed(record: SessionRecord, message: string): void {
+  private fallbackFromAutoRoot(record: SessionRecord, client: SessionClient, message: string, stream?: SessionStream): void {
+    if (record.client !== client) return;
     record.autoRoot = undefined;
+    if (record.stream === stream) record.stream = undefined;
     record.summary = { ...record.summary, message };
     this.emitState(record);
     this.options.emit('session.auto-root', { id: record.summary.id, status: 'failed', message });
+    stream?.end();
+    this.openUserStream(record, client, message);
+  }
+
+  private openUserStream(record: SessionRecord, client: SessionClient, message?: string): void {
+    client.shell((error, stream) => {
+      if (record.client !== client) return;
+      if (error) { this.fail(record, `无法创建交互终端：${error.message}`); return; }
+      stream.on('data', (chunk: Buffer | string) => this.handleData(record, chunk));
+      stream.on('close', () => this.handleStreamClose(record, stream));
+      this.activateStream(record, stream, message);
+    });
+  }
+
+  private activateStream(record: SessionRecord, stream: SessionStream, message?: string): void {
+    record.stream = stream;
+    record.summary = { ...record.summary, state: 'connected', message };
+    this.emitState(record);
+    this.options.emit('session.ready', { ...record.summary });
     this.startShellIntegration(record);
+  }
+
+  private handleStreamClose(record: SessionRecord, stream: SessionStream): void {
+    if (this.sessions.get(record.summary.id) !== record || record.stream !== stream) return;
+    record.stream = undefined;
+    this.shellIntegration.close(record.summary.id);
+    this.options.onSessionUnavailable?.(record.summary.id);
+    record.summary = { ...record.summary, state: 'disconnected', message: 'SSH 会话已关闭。' };
+    this.emitState(record);
   }
 
   private startShellIntegration(record: SessionRecord): void {

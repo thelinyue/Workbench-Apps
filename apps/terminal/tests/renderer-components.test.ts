@@ -6,9 +6,20 @@ import { DeviceSidebar } from '../renderer/device-sidebar';
 import { FilePanel } from '../renderer/file-panel';
 import { SplitPaneHandle } from '../renderer/split-pane-handle';
 import { TerminalWorkspace } from '../renderer/terminal-workspace';
+import * as terminalWorkspaceModule from '../renderer/terminal-workspace';
 import { TransferTaskPopover } from '../renderer/transfer-task-popover';
 
 describe('SSH 工作区组件', () => {
+  it('仅在焦点转移到 iframe 内其他控件时释放终端 Tab 捕获', () => {
+    const shouldReleaseTerminalTabCapture = (terminalWorkspaceModule as unknown as {
+      shouldReleaseTerminalTabCapture?: (relatedTarget: EventTarget | null) => boolean;
+    }).shouldReleaseTerminalTabCapture;
+
+    expect(shouldReleaseTerminalTabCapture).toBeTypeOf('function');
+    expect(shouldReleaseTerminalTabCapture?.({} as EventTarget)).toBe(true);
+    expect(shouldReleaseTerminalTabCapture?.(null)).toBe(false);
+  });
+
   it('设备栏区分最近连接与已保存连接并提供明确操作名称', () => {
     const markup = renderToStaticMarkup(createElement(DeviceSidebar, {
       collapsed: false,
@@ -102,6 +113,22 @@ describe('SSH 工作区组件', () => {
     }));
 
     expect(markup).toContain('跟随终端当前目录');
+  });
+
+  it('被动监听已开启但尚无 OSC 7 时保持勾选并提示独立导航', () => {
+    const markup = renderToStaticMarkup(createElement(FilePanel, {
+      host: { invoke: async () => undefined, onEvent: () => () => undefined } as never,
+      session: {
+        id: 'session-passive', title: '运维机', state: 'connected', integration: 'independent',
+        message: '远端尚未主动上报当前目录，文件面板使用独立导航。',
+        profile: { name: '运维机', host: '10.0.0.8', port: 22, username: 'ops', auth: 'password', shellIntegration: true }
+      },
+      open: true,
+      onClose: () => undefined
+    }));
+
+    expect(markup).toContain('<input type="checkbox" checked=""/>');
+    expect(markup).toContain('远端尚未上报目录，当前为独立导航');
   });
 
   it('未选择会话时仍显示禁用的目录跟随勾选框', () => {

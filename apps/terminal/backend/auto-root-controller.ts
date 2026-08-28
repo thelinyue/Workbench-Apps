@@ -18,7 +18,7 @@ export interface AutoRootControllerOptions {
  */
 export function buildAutoRootCommand(marker: string): string {
   const safeMarker = normalizeMarker(marker);
-  return `sudo -S -p "$(printf '\\033]9;WB_SUDO:${safeMarker}\\007')" -i sh -c 'WB_ROOT_SHELL="\${SHELL:-/bin/sh}"; WB_ROOT_NAME="\${WB_ROOT_SHELL##*/}"; printf "\\033]9;WB_ROOT_READY:${safeMarker}:%s\\007" "$WB_ROOT_NAME"; exec "$WB_ROOT_SHELL" -l'\n`;
+  return `sudo -S -p "$(printf '\\033]9;WB_SUDO:${safeMarker}\\007')" -i sh -c 'printf "\\033]9;WB_ROOT_READY:${safeMarker}:%s\\007" "\${SHELL##*/}"; exec "\${SHELL:-/bin/sh}" -l'`;
 }
 
 /**
@@ -36,10 +36,6 @@ export class AutoRootController {
   public constructor(private readonly options: AutoRootControllerOptions) {
     const marker = normalizeMarker(options.marker);
     this.controlPattern = new RegExp(`\\u001b\\]9;WB_(SUDO|ROOT_READY):${escapeRegExp(marker)}(?::([^\\u0007]*))?\\u0007`, 'g');
-  }
-
-  public start(): void {
-    this.options.write(buildAutoRootCommand(this.options.marker));
   }
 
   public consume(data: string): string {

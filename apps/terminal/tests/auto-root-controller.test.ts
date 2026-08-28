@@ -11,6 +11,15 @@ describe('自动切换 root 状态机', () => {
     expect(command).not.toMatch(/(?:\.bashrc|\.zshrc|\.profile|touch|tee|sed\s+-i)/i);
   });
 
+  it('root 登录 shell 二次解析命令时不依赖尚未生效的临时变量', () => {
+    const command = buildAutoRootCommand('nonce-shell');
+
+    expect(command).not.toContain('WB_ROOT_SHELL');
+    expect(command).not.toContain('WB_ROOT_NAME');
+    expect(command).toContain('"${SHELL##*/}"');
+    expect(command).toContain('exec "${SHELL:-/bin/sh}" -l');
+  });
+
   it('只在 sudo 控制提示出现后发送密码并从终端输出中移除控制序列', () => {
     const writes: string[] = [];
     const events: string[] = [];
@@ -21,11 +30,8 @@ describe('自动切换 root 状态机', () => {
       onReady: (shell) => events.push(`ready:${shell}`),
       onFailure: (message) => events.push(`failure:${message}`)
     });
-    controller.start();
-
-    expect(writes[0]).not.toContain('very-secret');
     expect(controller.consume(`before\u001b]9;WB_SUDO:nonce-2\u0007after`)).toBe('beforeafter');
-    expect(writes[1]).toBe('very-secret\n');
+    expect(writes[0]).toBe('very-secret\n');
     expect(controller.consume(`\u001b]9;WB_ROOT_READY:nonce-2:bash\u0007`)).toBe('');
     expect(events).toEqual(['ready:bash']);
   });
@@ -36,7 +42,6 @@ describe('自动切换 root 状态机', () => {
     const controller = new AutoRootController({
       marker: 'nonce-3', secret: 'wrong', write: (data) => writes.push(data), onReady: () => undefined, onFailure: (message) => failures.push(message)
     });
-    controller.start();
     controller.consume('\u001b]9;WB_SUDO:nonce-3\u0007');
     controller.consume('Sorry, try again.\r\n\u001b]9;WB_SUDO:nonce-3\u0007');
 
@@ -54,8 +59,6 @@ describe('自动切换 root 状态机', () => {
       onReady: (shell) => events.push(shell),
       onFailure: () => undefined
     });
-    controller.start();
-
     expect(controller.consume('prompt\u001b]9;WB_SU')).toBe('prompt');
     expect(controller.consume('DO:fragmented\u0007')).toBe('');
     expect(writes.at(-1)).toBe('secret\n');

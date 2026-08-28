@@ -16,8 +16,16 @@ class FakeClient extends EventEmitter implements SessionClient {
   public readonly stream = new FakeStream();
   public readonly sftpChannel = { name: 'sftp-channel' };
   public ended = false;
+  public execCommand?: string;
+  public execOptions?: { pty?: boolean };
   public connectOptions?: { hostVerifier?: (fingerprint: string) => boolean };
   public connect(options: { hostVerifier?: (fingerprint: string) => boolean }) { this.connectOptions = options; return this; }
+  public exec(command: string, options: { pty?: boolean }, callback: (error: Error | undefined, stream: SessionStream) => void) {
+    this.execCommand = command;
+    this.execOptions = options;
+    callback(undefined, this.stream);
+    return this;
+  }
   public shell(callback: (error: Error | undefined, stream: SessionStream) => void) { callback(undefined, this.stream); return this; }
   public sftp(callback: (error: Error | undefined, channel?: unknown) => void) { callback(undefined, this.sftpChannel); return this; }
   public end() { this.ended = true; }
@@ -108,13 +116,12 @@ describe('SSH 多会话服务', () => {
     expect(events).toContainEqual({ event: 'session.host-key', payload: expect.objectContaining({ id: session.id, fingerprint: 'SHA256:first' }) });
   });
 
-  it('auto-root 成功后才安装临时目录跟随且控制序列不进入输出快照', async () => {
+  it('auto-root 通过独立 exec PTY 启动且不向交互终端写入 sudo 命令', async () => {
     const client = new FakeClient();
-    const markers = ['root-marker', 'cwd-marker'];
     const events: Array<{ event: string; payload: unknown }> = [];
     const service = new SessionService({
       createClient: () => client,
-      createMarker: () => markers.shift()!,
+      createMarker: () => 'root-marker',
       emit: (event, payload) => events.push({ event, payload })
     });
     const session = await service.connect({
@@ -123,16 +130,27 @@ describe('SSH 多会话服务', () => {
     });
     client.emit('ready');
 
-    expect(client.stream.writes[0]).toContain('WB_SUDO:root-marker');
+    expect(client.execCommand).toContain('WB_SUDO:root-marker');
+    expect(client.execOptions).toEqual({ pty: true });
+    expect(client.stream.writes).toEqual([]);
     client.stream.emit('data', '\u001b]9;WB_SUDO:root-marker\u0007');
-    expect(client.stream.writes[1]).toBe('login-password\n');
+    expect(client.stream.writes).toEqual(['login-password\n']);
     client.stream.emit('data', '\u001b]9;WB_ROOT_READY:root-marker:bash\u0007');
-    expect(client.stream.writes[2]).toContain('PROMPT_COMMAND');
-    client.stream.emit('data', 'ready\r\n\u001b]7;file://cwd-marker/root\u0007');
+    client.stream.emit('data', 'ready\r\n\u001b]7;file://remote-host/root\u0007');
 
     expect(service.snapshot(session.id)).toBe('ready\r\n');
     expect(service.list()).toMatchObject([{ id: session.id, state: 'connected', integration: 'following', cwd: '/root' }]);
     expect(events).toContainEqual({ event: 'session.cwd', payload: { id: session.id, cwd: '/root' } });
+  });
+
+  it('开启目录跟随时只被动监听 OSC 7，不向普通用户 PTY 写入探测或钩子命令', async () => {
+    const client = new FakeClient();
+    const service = new SessionService({ createClient: () => client, emit: () => undefined });
+    await service.connect({ profile: { ...target('passive-cwd'), shellIntegration: true } });
+
+    client.emit('ready');
+
+    expect(client.stream.writes).toEqual([]);
   });
 
   it('按 sessionId 从对应 SSH Client 懒加载 SFTP 通道', async () => {
@@ -166,21 +184,21 @@ describe('SSH 多会话服务', () => {
     expect(service.list()).toMatchObject([{ id: session.id, state: 'connected' }]);
   });
 
-  it('关闭目录跟随时恢复内存钩子，重新开启时再次探测当前 shell', async () => {
+  it('关闭和重新开启目录跟随都只改变本地监听状态', async () => {
     const client = new FakeClient();
-    const markers = ['detect-one', 'detect-two'];
-    const service = new SessionService({ createClient: () => client, createMarker: () => markers.shift()!, emit: () => undefined });
+    const service = new SessionService({ createClient: () => client, emit: () => undefined });
     const session = await service.connect({ profile: { ...target('toggle'), shellIntegration: true } });
     client.emit('ready');
-    client.stream.emit('data', '\u001b]9;WB_SHELL:detect-one:bash\u0007');
-    client.stream.emit('data', '\u001b]7;file://detect-one/home/ops\u0007');
+    client.stream.emit('data', '\u001b]7;file://remote/home/ops\u0007');
 
     service.setIntegration(session.id, false);
-    expect(client.stream.writes.at(-1)).toContain('unset -f __WB_OSC7');
+    expect(client.stream.writes).toEqual([]);
     expect(service.list()).toMatchObject([{ id: session.id, integration: 'independent' }]);
 
     service.setIntegration(session.id, true);
-    expect(client.stream.writes.at(-1)).toContain('WB_SHELL:detect-two');
+    expect(client.stream.writes).toEqual([]);
+    client.stream.emit('data', '\u001b]7;file://remote/var/log\u0007');
+    expect(service.list()).toMatchObject([{ id: session.id, integration: 'following', cwd: '/var/log' }]);
   });
 
   it('用户主动关闭标签时移除 Session，自然断线则保留用于重连', async () => {

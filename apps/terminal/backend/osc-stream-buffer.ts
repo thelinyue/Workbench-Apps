@@ -18,9 +18,10 @@ export class OscStreamBuffer {
 }
 
 function incompleteOscStart(data: string): number {
-  const escapeIndex = data.lastIndexOf('\u001b');
-  if (escapeIndex < 0) return -1;
-  const suffix = data.slice(escapeIndex);
-  if (suffix === '\u001b') return escapeIndex;
-  return suffix.startsWith('\u001b]') && !suffix.includes('\u0007') ? escapeIndex : -1;
+  const openingIndex = data.lastIndexOf('\u001b]');
+  if (openingIndex >= 0) {
+    const suffix = data.slice(openingIndex);
+    if (!suffix.includes('\u0007') && !suffix.includes('\u001b\\')) return openingIndex;
+  }
+  return data.endsWith('\u001b') ? data.length - 1 : -1;
 }

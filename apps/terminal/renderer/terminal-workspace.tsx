@@ -20,12 +20,19 @@ interface TerminalRecord {
   fit: FitAddon;
   loadingSnapshot: boolean;
   pendingData: string[];
+  releaseKeyboardCapture(): void;
+}
+
+/** 跨来源 iframe 失焦时 relatedTarget 为 null，应把该次 Tab 交给宿主回送；iframe 内部切换焦点则立即释放捕获。 */
+export function shouldReleaseTerminalTabCapture(relatedTarget: EventTarget | null): boolean {
+  return relatedTarget !== null;
 }
 
 /**
  * 管理窗口内多标签 xterm 展示。
  * backend 是会话真源，组件重建时先恢复最多 1 MiB 快照，再追加恢复期间收到的数据，避免
- * 独立窗口关闭重开造成输出丢失或乱序。
+ * 独立窗口关闭重开造成输出丢失或乱序。xterm 聚焦期间还会临时申请 Tab 捕获，以修复
+ * Electron 跨来源 iframe 把补全键重定向到宿主 BODY 的问题，失焦后立即恢复常规焦点导航。
  */
 export function TerminalWorkspace({ host, sessions, activeId, onActive, onDisconnect, onReconnect, onNew }: TerminalWorkspaceProps) {
   const records = useRef(new Map<string, TerminalRecord>());
@@ -50,7 +57,22 @@ export function TerminalWorkspace({ host, sessions, activeId, onActive, onDiscon
     terminal.loadAddon(fit);
     terminal.open(element);
     terminal.onData((data) => { void host.invoke('sessions.input', { id: sessionId, data }).catch(() => undefined); });
-    const record: TerminalRecord = { terminal, fit, loadingSnapshot: true, pendingData: [] };
+    const textarea = element.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea');
+    const onFocus = () => {
+      host.setKeyboardCapture('Tab', true);
+    };
+    const onBlur = (event: FocusEvent) => {
+      if (shouldReleaseTerminalTabCapture(event.relatedTarget)) host.setKeyboardCapture('Tab', false);
+    };
+    textarea?.addEventListener('focus', onFocus);
+    textarea?.addEventListener('blur', onBlur);
+    const releaseKeyboardCapture = () => {
+      const wasFocused = document.activeElement === textarea;
+      textarea?.removeEventListener('focus', onFocus);
+      textarea?.removeEventListener('blur', onBlur);
+      if (wasFocused) host.setKeyboardCapture('Tab', false);
+    };
+    const record: TerminalRecord = { terminal, fit, loadingSnapshot: true, pendingData: [], releaseKeyboardCapture };
     records.current.set(sessionId, record);
     void host.invoke<string>('sessions.snapshot', { id: sessionId })
       .then((snapshot) => {
@@ -70,10 +92,19 @@ export function TerminalWorkspace({ host, sessions, activeId, onActive, onDiscon
     else record.terminal.write(value.data);
   }), [host]);
 
+  useEffect(() => host.onKeyboardInput((event) => {
+    if (event.key !== 'Tab' || !activeId) return;
+    const record = records.current.get(activeId);
+    if (!record) return;
+    record.terminal.focus();
+    void host.invoke('sessions.input', { id: activeId, data: '\t' }).catch(() => undefined);
+  }), [activeId, host]);
+
   useEffect(() => {
     const ids = new Set(sessions.map((session) => session.id));
     for (const [id, record] of records.current) {
       if (ids.has(id)) continue;
+      record.releaseKeyboardCapture();
       record.terminal.dispose();
       records.current.delete(id);
     }
@@ -97,7 +128,10 @@ export function TerminalWorkspace({ host, sessions, activeId, onActive, onDiscon
   }, [activeId, host, sessions.length]);
 
   useEffect(() => () => {
-    for (const record of records.current.values()) record.terminal.dispose();
+    for (const record of records.current.values()) {
+      record.releaseKeyboardCapture();
+      record.terminal.dispose();
+    }
     records.current.clear();
   }, []);
 

@@ -20,6 +20,7 @@ export function FilePanel({ host, session, open, headerActions, onClose }: FileP
   const [error, setError] = useState('');
   const [overwrite, setOverwrite] = useState<{ paths: string[]; remoteDirectory: string }>();
   const connected = session?.state === 'connected';
+  const passiveFollowEnabled = Boolean(session && session.profile.shellIntegration !== false);
 
   const load = async (requestedPath?: string) => {
     if (!session || !connected) return;
@@ -91,9 +92,10 @@ export function FilePanel({ host, session, open, headerActions, onClose }: FileP
       <div className="panel-heading-actions">{headerActions}<button className="icon-button drawer-close" type="button" aria-label="关闭文件面板" title="关闭文件面板" onClick={onClose}><X size={17} aria-hidden="true" /></button></div>
     </header>
     <div className="integration-row">
-      <label><input type="checkbox" checked={session?.integration === 'following' || session?.integration === 'pending'} disabled={!connected} onChange={(event) => { if (session) void host.invoke('sessions.integration', { id: session.id, enabled: event.target.checked }); }} /><span>跟随终端当前目录</span></label>
-      {session?.integration === 'pending' && <small>正在确认目录跟随</small>}
-      {session?.integration === 'independent' && <small title={session.message ?? '独立导航'}>{session.message ?? '独立导航'}</small>}
+      <label><input type="checkbox" checked={passiveFollowEnabled} disabled={!connected} onChange={(event) => { if (session) void host.invoke('sessions.integration', { id: session.id, enabled: event.target.checked }); }} /><span>跟随终端当前目录</span></label>
+      {session?.integration === 'pending' && <small>等待远端终端主动上报目录</small>}
+      {session?.integration === 'independent' && passiveFollowEnabled && <small title={session.message}>远端尚未上报目录，当前为独立导航</small>}
+      {session?.integration === 'independent' && !passiveFollowEnabled && <small>独立导航</small>}
     </div>
     <div className="path-toolbar">
       <button className="icon-button" type="button" aria-label="返回上级目录" title="返回上级目录" disabled={!connected || path === '/'} onClick={() => void load(parentPath)}><ArrowUp size={16} aria-hidden="true" /></button>
