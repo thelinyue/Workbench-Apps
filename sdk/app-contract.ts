@@ -13,8 +13,26 @@ export interface AppManifestV1 {
   version: string;
   hostApiVersion: string;
   minWorkbenchVersion: string;
+  window?: AppWindowManifest;
   runtime: AppRuntimeV1;
   capabilities: string[];
+}
+
+/**
+ * 原生独立应用窗口的初始与最小尺寸。
+ *
+ * 该字段只描述窗口宿主的通用尺寸约束，不承载应用特有的窗口 DSL，
+ * 以保持应用包可独立发布且由宿主统一管理窗口生命周期。
+ */
+export interface AppWindowManifest {
+  defaultSize: AppWindowSize;
+  minSize: AppWindowSize;
+}
+
+/** 原生窗口的像素尺寸。 */
+export interface AppWindowSize {
+  width: number;
+  height: number;
 }
 
 /** 应用 renderer 的运行方式；backendEntry 保持可选以支持纯静态 Web 工具。 */

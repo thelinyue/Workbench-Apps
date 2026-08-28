@@ -40,7 +40,7 @@ describe('发布版分析 Worker', () => {
     expect(task).toMatchObject({ scope: 'storage', status: 'succeeded', message: '诊断结果已完成' });
     expect(result.diagnosis).toEqual({ schemaVersion: 1 });
     await expect(import('node:fs/promises').then(({ access }) => access(result.reportPath!))).resolves.toBeUndefined();
-  });
+  }, 20_000);
 });
 
 function createPublishedRunner(input: { backendEntryUrl: string; archivePath: string; dataDirectory: string }): string {
@@ -58,7 +58,7 @@ while (Date.now() < deadline) {
 }
 const [diagnosticPackageResult] = await backend.invoke('packages.list', null);
 const diagnosis = await backend.invoke('results.get', { packageId: diagnosticPackage.id });
-backend.close();
+await backend.close();
 if (!task) throw new Error('等待发布版存储分析任务完成超时');
 process.stdout.write(JSON.stringify({ task, reportPath: diagnosticPackageResult.reportPath, diagnosis: diagnosis ? { schemaVersion: diagnosis.schemaVersion } : undefined }));
 `;

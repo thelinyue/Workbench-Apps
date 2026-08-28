@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WorkspaceRepository, type AnalysisTaskRecord } from '../backend/lib/data/workspace-repository';
-import { AnalysisTaskService } from '../backend/lib/services/analysis-task-service';
+import { AnalysisTaskService, selectNextQueuedTask } from '../backend/lib/services/analysis-task-service';
 
 const directories: string[] = [];
 
@@ -25,13 +25,14 @@ function savePackage(repository: WorkspaceRepository, taskIds: string[]) {
   });
 }
 
-function saveTask(repository: WorkspaceRepository, id: string, status: AnalysisTaskRecord['status']): void {
+function saveTask(repository: WorkspaceRepository, id: string, status: AnalysisTaskRecord['status'], startedAt?: string): void {
   repository.upsertTask({
     id,
     packageId: 'package-1',
     scope: 'comprehensive',
     status,
     createdAt: `2026-08-25T10:25:${id.slice(-2)}.000Z`,
+    startedAt,
     progress: status === 'succeeded' || status === 'failed' ? 100 : 0,
     message: status
   });
@@ -49,6 +50,28 @@ function saveAnalysisRecord(repository: WorkspaceRepository, taskId: string, sta
 }
 
 describe('分析任务清理', () => {
+  it('队列按创建先后 FIFO 选择下一项，与界面的前方任务数一致', () => {
+    const task = (id: string, createdAt: string): AnalysisTaskRecord => ({ id, packageId: id, scope: 'comprehensive', status: 'queued', createdAt, progress: 0, message: '等待综合分析' });
+    const next = selectNextQueuedTask([
+      task('task-c', '2026-08-27T10:03:00.000Z'),
+      task('task-b', '2026-08-27T10:02:00.000Z'),
+      { ...task('task-a', '2026-08-27T10:01:00.000Z'), status: 'running' }
+    ]);
+
+    expect(next?.id).toBe('task-b');
+  });
+
+  it('持久化任务实际开始时间，供重新打开分析中心后继续显示运行耗时', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'workbench-task-started-at-'));
+    directories.push(root);
+    const repository = new WorkspaceRepository(join(root, 'workbench.db'));
+    savePackage(repository, ['task-01']);
+    saveTask(repository, 'task-01', 'running', '2026-08-25T10:26:00.000Z');
+
+    expect(repository.listTasks()[0]).toEqual(expect.objectContaining({ startedAt: '2026-08-25T10:26:00.000Z' }));
+    repository.close();
+  });
+
   it('清理单个终态任务时保留诊断包和报告索引，并移除关联引用', async () => {
     const root = await mkdtemp(join(tmpdir(), 'workbench-task-cleanup-'));
     directories.push(root);

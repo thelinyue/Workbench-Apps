@@ -17,10 +17,20 @@ interface RpcResponse {
   errorMessage?: string;
 }
 
-interface AppCommand {
-  type: 'workbench-app-command';
+interface FileDropMessage {
+  type: 'workbench-app-file-drop';
   appId: string;
-  command: string;
+  requestId: string;
+  files: File[];
+}
+
+interface FileDropResponse {
+  type: 'workbench-app-file-drop-response';
+  appId: string;
+  requestId: string;
+  ok: boolean;
+  paths?: string[];
+  errorMessage?: string;
 }
 
 let requestSequence = 0;
@@ -39,15 +49,20 @@ function createRequestId(): string {
 /** iframe 内唯一的宿主通信入口，来源和请求 ID 均由父窗口校验后才会得到响应。 */
 export class AppHostClient {
   private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private readonly fileDropPending = new Map<string, { resolve: (paths: string[]) => void; reject: (error: Error) => void }>();
   private readonly eventListeners = new Set<(event: AppHostEvent) => void>();
-  private readonly commandListeners = new Set<(command: string) => void>();
 
   public constructor(private readonly appId: string) {
-    window.addEventListener('message', (event: MessageEvent<RpcResponse | { type: 'workbench-app-event'; event: AppHostEvent } | AppCommand>) => {
+    window.addEventListener('message', (event: MessageEvent<RpcResponse | FileDropResponse | { type: 'workbench-app-event'; event: AppHostEvent }>) => {
       if (event.source !== window.parent || !event.data) return;
-      if (event.data.type === 'workbench-app-command') {
-        const command = event.data.command;
-        if (event.data.appId === this.appId) this.commandListeners.forEach((listener) => listener(command));
+      if (event.data.type === 'workbench-app-file-drop-response') {
+        if (event.data.appId !== this.appId) return;
+        const pending = this.fileDropPending.get(event.data.requestId);
+        if (!pending) return;
+        this.fileDropPending.delete(event.data.requestId);
+        event.data.ok
+          ? pending.resolve(event.data.paths ?? [])
+          : pending.reject(new Error(event.data.errorMessage ?? '宿主未能解析拖入文件的本地路径。'));
         return;
       }
       if (event.data.type === 'workbench-app-event') {
@@ -73,14 +88,21 @@ export class AppHostClient {
     });
   }
 
+  /**
+   * 仅向宿主请求 Chromium File 对应的本地路径，诊断包导入仍由分析中心负责。
+   * 文件投递与普通 RPC 使用独立 pending 表，避免相同请求 ID 或错误消息类型造成串线。
+   */
+  public resolveDroppedFiles(files: File[]): Promise<string[]> {
+    const requestId = createRequestId();
+    const message: FileDropMessage = { type: 'workbench-app-file-drop', appId: this.appId, requestId, files };
+    return new Promise<string[]>((resolve, reject) => {
+      this.fileDropPending.set(requestId, { resolve, reject });
+      window.parent.postMessage(message, '*');
+    });
+  }
+
   public onEvent(listener: (event: AppHostEvent) => void): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
-  }
-
-  /** 宿主标题栏等壳层控件通过命令驱动应用内的临时界面，不越权访问应用数据。 */
-  public onCommand(listener: (command: string) => void): () => void {
-    this.commandListeners.add(listener);
-    return () => this.commandListeners.delete(listener);
   }
 }

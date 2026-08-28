@@ -42,6 +42,15 @@ describe('V1 统一诊断分析', () => {
     expect(result.diagnoses).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'storage.device.suspected_failure' })]));
   });
 
+  it('XFS metadata corruption 仍进入文件系统异常规则，不能被性能预筛选跳过', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'xfs-corruption.tgz',
+      files: { 'kern.log': 'XFS (dm-0): Metadata corruption detected at xfs_inode.c:123' }
+    });
+
+    expect(result.findings).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'filesystem.error:system' })]));
+  });
+
   it('将无 /dev 前缀的设备名和 raw_value SMART 原始值归一化为设备风险', () => {
     const result = analyzeV1Sources({
       sourceName: 'normalized-smart-risk.tgz',

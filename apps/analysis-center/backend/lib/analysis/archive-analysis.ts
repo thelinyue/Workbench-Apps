@@ -13,6 +13,7 @@ import bootstrapCss from './static/bootstrap.min.css?raw';
 import bootstrapScript from './static/bootstrap.bundle.min.js?raw';
 import { analyzeStructuredExtract, type StructuredAnalysis } from './structured-analysis';
 import { analyzeV1Sources, type AnalysisResult as V1AnalysisResult } from '../analysis-v1/pipeline';
+import { selectImportantFindings } from '../../../shared/finding-presentation';
 
 export type AnalysisScope = 'comprehensive' | 'storage';
 
@@ -53,10 +54,10 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
     throw new Error(`无法解压诊断包：${error instanceof Error ? error.message : String(error)}`);
   }
   request.onProgress?.({ progress: 35, message: '正在识别系统与存储日志' });
-  const files = await collectV1Sources(request.extractDirectory);
+  const files = await collectV1Sources(request.extractDirectory, (processedFiles, totalFiles) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), message: `正在读取日志（${processedFiles}/${totalFiles}）` }));
   if (!Object.keys(files).length) throw new Error('无法识别日志包：未找到受支持的系统或存储日志');
-  request.onProgress?.({ progress: 60, message: '正在解析统一事件' });
-  const result = analyzeV1Sources({ sourceName: basename(request.sourcePath), files });
+  request.onProgress?.({ progress: 55, message: '正在解析统一事件' });
+  const result = analyzeV1Sources({ sourceName: basename(request.sourcePath), files, onProgress: ({ processedFiles, totalFiles, progress }) => request.onProgress?.({ progress: 55 + Math.round(progress * 0.3), message: `正在解析日志（${processedFiles}/${totalFiles}）` }) });
   request.onProgress?.({ progress: 85, message: '正在关联诊断结论' });
   const browserPath = join(request.extractDirectory, 'analysis-result.html');
   await writeFile(browserPath, renderV1Html(result), 'utf8');
@@ -64,18 +65,26 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
   return { result, browserPath };
 }
 
-async function collectV1Sources(root: string): Promise<Record<string, string>> {
+/** 先收集并排序白名单文件，再逐一读取；这样进度稳定且结果不受文件系统枚举顺序影响。 */
+async function collectV1Sources(root: string, onProgress?: (processedFiles: number, totalFiles: number) => void): Promise<Record<string, string>> {
   const files: Record<string, string> = {};
+  const candidates: string[] = [];
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) { await visit(path); continue; }
       if (!entry.isFile() || !isV1Source(entry.name)) continue;
-      try { files[path.slice(root.length + 1).replaceAll('\\', '/')] = (await readFile(path)).toString('utf8'); }
-      catch (error) { console.error(`读取 V1 分析日志失败，已跳过：${path}；原因：${error instanceof Error ? error.message : String(error)}`); }
+      candidates.push(path);
     }
   };
   await visit(root);
+  candidates.sort();
+  for (let index = 0; index < candidates.length; index += 1) {
+    const path = candidates[index];
+      try { files[path.slice(root.length + 1).replaceAll('\\', '/')] = (await readFile(path)).toString('utf8'); }
+      catch (error) { console.error(`读取 V1 分析日志失败，已跳过：${path}；原因：${error instanceof Error ? error.message : String(error)}`); }
+    onProgress?.(index + 1, candidates.length);
+  }
   return files;
 }
 
@@ -86,7 +95,11 @@ function isV1Source(name: string): boolean {
 function renderV1Html(result: V1AnalysisResult): string {
   const escape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   const primary = result.diagnoses[0];
-  const findings = result.findings.map((item) => `<li><strong>${escape(item.title)}</strong> ${escape(item.summary)}</li>`).join('') || '<li>未发现明确异常。</li>';
+  const findings = selectImportantFindings(result.findings, primary?.findingIds).map((item) => {
+    const display = item.display;
+    const resources = display.affectedResources.length ? `<br>影响对象：${escape(display.affectedResources.join('、'))}` : '';
+    return `<li><strong>${escape(display.title)}</strong><br>风险级别：${escape(display.riskLabel)} · ${escape(display.occurrenceText)}${resources}<br>${escape(display.meaning)}<br><strong>建议：</strong>${escape(display.advice)}<br><small>技术事件：${escape(display.technicalEvent)}</small></li>`;
+  }).join('') || '<li>未发现明确异常。</li>';
   const recommendations = result.recommendations.map((item) => `<li><strong>${item.priority}. ${escape(item.title)}</strong><br>${escape(item.reason)}</li>`).join('') || '<li>当前没有需要立即执行的建议。</li>';
   const abnormalDevices = result.deviceAssessments.filter((device) => device.smartRiskAttributes.length || device.ioErrorCount > 0);
   const deviceDetails = abnormalDevices.map((device) => `<li><strong>${escape(localizeDeviceLabel(device.label, device.resource))}</strong><br>序列号：${escape(device.serial ?? '日志未提供')} · 用途：${escape(localizeUsage(device.usedFor))}<br><small>型号：${escape(device.model ?? '日志未提供')} · 槽位：${escape(device.slot ?? '日志未提供')} · 设备名：${escape(device.resource)}</small></li>`).join('') || '<li>当前没有可定位的异常硬盘身份信息。</li>';

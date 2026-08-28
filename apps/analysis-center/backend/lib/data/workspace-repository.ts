@@ -6,9 +6,9 @@ import type { AnalysisResult } from '../analysis-v1/pipeline';
 
 export const MIN_MONITOR_SCAN_INTERVAL_MINUTES = 1;
 export const DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES = 5;
-export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'comprehensive' | 'storage'; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; createdAt: string; progress: number; message: string; errorMessage?: string; }
+export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'comprehensive' | 'storage'; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; createdAt: string; startedAt?: string; progress: number; message: string; errorMessage?: string; }
 export interface AnalysisRecord { id: string; packageId: string; taskId: string; status: AnalysisTaskRecord['status']; createdAt: string; updatedAt: string; }
-export interface MonitorSettings { directory?: string; enabled: boolean; }
+export interface MonitorSettings { directory?: string; enabled: boolean; scanIntervalMinutes: number; }
 export interface AnalysisFailureRecord { taskId: string; packageId: string; stage: string; errorMessage: string; inputMetadata: Record<string, string>; createdAt: string; }
 
 const COMPLETED_TASK_STATUSES = ['succeeded', 'failed', 'cancelled'] as const;
@@ -90,11 +90,16 @@ export class WorkspaceRepository {
     const enabledRow = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorEnabled'").get() as { value: string } | undefined;
     const legacyDirectory = this.getMonitorDirectories()[0];
     const directory = directoryRow?.value || legacyDirectory;
-    return { directory: directory || undefined, enabled: enabledRow ? enabledRow.value === 'true' : Boolean(directory) };
+    return {
+      directory: directory || undefined,
+      enabled: enabledRow ? enabledRow.value === 'true' : Boolean(directory),
+      scanIntervalMinutes: this.getMonitorScanIntervalMinutes()
+    };
   }
 
   public saveMonitorSettings(settings: MonitorSettings): void {
     const directory = settings.directory?.trim();
+    this.saveMonitorScanIntervalMinutes(settings.scanIntervalMinutes);
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorDirectory', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(directory ?? '');
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorEnabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(Boolean(directory && settings.enabled)));
     this.saveMonitorDirectories(directory ? [directory] : []);
@@ -155,16 +160,16 @@ export class WorkspaceRepository {
 
   public upsertTask(task: AnalysisTaskRecord): void {
     this.database.prepare(`
-      INSERT INTO analysis_tasks (id, package_id, scope, status, created_at, progress, message, error_message)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET scope = excluded.scope, status = excluded.status, progress = excluded.progress, message = excluded.message, error_message = excluded.error_message
-    `).run(task.id, task.packageId, task.scope, task.status, task.createdAt, task.progress, task.message, task.errorMessage ?? null);
+      INSERT INTO analysis_tasks (id, package_id, scope, status, created_at, started_at, progress, message, error_message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET scope = excluded.scope, status = excluded.status, started_at = excluded.started_at, progress = excluded.progress, message = excluded.message, error_message = excluded.error_message
+    `).run(task.id, task.packageId, task.scope, task.status, task.createdAt, task.startedAt ?? null, task.progress, task.message, task.errorMessage ?? null);
   }
 
   public getTask(id: string): AnalysisTaskRecord | undefined { return this.listTasks().find((item) => item.id === id); }
 
   public listTasks(): AnalysisTaskRecord[] {
-    return this.database.prepare(`SELECT id, package_id AS packageId, scope, status, created_at AS createdAt, progress, message, error_message AS errorMessage FROM analysis_tasks ORDER BY created_at DESC`).all() as unknown as AnalysisTaskRecord[];
+    return this.database.prepare(`SELECT id, package_id AS packageId, scope, status, created_at AS createdAt, started_at AS startedAt, progress, message, error_message AS errorMessage FROM analysis_tasks ORDER BY created_at DESC`).all() as unknown as AnalysisTaskRecord[];
   }
 
   /**
@@ -224,7 +229,7 @@ export class WorkspaceRepository {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS diagnostic_packages (id TEXT PRIMARY KEY, source_path TEXT NOT NULL, extract_path TEXT NOT NULL, report_path TEXT, display_name TEXT NOT NULL, detected_at TEXT NOT NULL, status TEXT NOT NULL, task_ids TEXT NOT NULL, case_id TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS analysis_tasks (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, progress INTEGER NOT NULL, message TEXT NOT NULL, error_message TEXT, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS analysis_tasks (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT, progress INTEGER NOT NULL, message TEXT NOT NULL, error_message TEXT, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS analysis_cases (id TEXT PRIMARY KEY, package_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS analysis_records (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE, FOREIGN KEY(task_id) REFERENCES analysis_tasks(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS report_index (package_id TEXT PRIMARY KEY, path TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
@@ -232,6 +237,7 @@ export class WorkspaceRepository {
       CREATE TABLE IF NOT EXISTS analysis_failures (task_id TEXT PRIMARY KEY, package_id TEXT NOT NULL, stage TEXT NOT NULL, error_message TEXT NOT NULL, input_metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE, FOREIGN KEY(task_id) REFERENCES analysis_tasks(id) ON DELETE CASCADE);
     `);
     try { this.database.exec("ALTER TABLE analysis_tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'comprehensive';"); } catch { /* 已升级数据库会报告重复列，保持兼容。 */ }
+    try { this.database.exec('ALTER TABLE analysis_tasks ADD COLUMN started_at TEXT;'); } catch { /* 已升级数据库会报告重复列，保持兼容。 */ }
     try { this.database.exec("ALTER TABLE analysis_failures ADD COLUMN input_metadata TEXT NOT NULL DEFAULT '{}';"); } catch { /* 新建或已升级数据库均无需处理。 */ }
   }
 }

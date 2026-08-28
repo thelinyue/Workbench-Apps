@@ -5,6 +5,7 @@ import { AnalysisCenterService } from './lib/services/analysis-center-service';
 import { AnalysisTaskService } from './lib/services/analysis-task-service';
 import { MonitorDirectoryService } from './lib/services/monitor-directory-service';
 import { LifecycleDeletionService } from './lib/services/lifecycle-deletion-service';
+import { createAnalysisBackendShutdown } from './lib/services/analysis-backend-shutdown';
 import { WorkspaceRepository } from './lib/data/workspace-repository';
 import type { AnalyzerRuleCatalog } from './lib/analysis/log-analyzer';
 
@@ -17,7 +18,7 @@ interface AppBackendContext {
 
 interface AppBackend {
   invoke(method: string, payload: unknown): Promise<unknown> | unknown;
-  close(): void;
+  close(): Promise<void>;
 }
 
 interface PendingDeletion {
@@ -40,9 +41,22 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
   const deletion = new LifecycleDeletionService(repository);
   const pendingDeletions = new Map<string, PendingDeletion>();
   const emitChanged = () => context.emit('tasks.changed', { tasks: repository.listTasks() });
+  const emitPackagesChanged = () => context.emit('packages.changed', {});
+  const emitMonitorStatusChanged = (status: unknown) => context.emit('monitor.status.changed', status);
   tasks.on('changed', emitChanged);
-  monitor.on('changed', () => context.emit('packages.changed', {}));
+  monitor.on('changed', emitPackagesChanged);
+  monitor.on('status.changed', emitMonitorStatusChanged);
   void monitor.start().catch((error) => console.error(`监控目录启动失败：${error instanceof Error ? error.message : String(error)}`));
+  const close = createAnalysisBackendShutdown({
+    monitor,
+    tasks,
+    detachListeners: () => {
+      tasks.off('changed', emitChanged);
+      monitor.off('changed', emitPackagesChanged);
+      monitor.off('status.changed', emitMonitorStatusChanged);
+    },
+    repository
+  });
 
   const getPackage = (id: string) => {
     const item = analysis.getPackage(id);
@@ -92,7 +106,7 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           try {
             const lines = (await readFile(sourcePath, 'utf8')).split(/\r?\n/);
             const start = Math.max(0, evidence.lineNumber - 4);
-            return { available: true, lines: lines.slice(start, evidence.lineNumber + 3) };
+            return { available: true, startLineNumber: start + 1, lines: lines.slice(start, evidence.lineNumber + 3) };
           } catch {
             return { available: false, lines: [], message: '源日志已不存在，当前保留诊断结论与证据摘要。' };
           }
@@ -119,23 +133,20 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           return undefined;
         }
         case 'settings.get': return repository.getMonitorSettings();
+        case 'monitor.status': return monitor.getStatus();
         case 'settings.save': {
           const value = readRecord(payload);
           const directory = value.directory === undefined || value.directory === null ? undefined : readString(value, 'directory');
           if (typeof value.enabled !== 'boolean') throw new Error('监控目录启用状态必须是布尔值');
           if (value.enabled && !directory) throw new Error('启用监控前请选择目录');
-          repository.saveMonitorSettings({ directory, enabled: value.enabled });
+          repository.saveMonitorSettings({ directory, enabled: value.enabled, scanIntervalMinutes: readInteger(value, 'scanIntervalMinutes') });
           await monitor.reconfigure();
           return undefined;
         }
         default: throw new Error(`分析中心不支持该请求：${method}`);
       }
     },
-    close() {
-      tasks.off('changed', emitChanged);
-      monitor.close();
-      repository.close();
-    }
+    close
   };
 }
 
@@ -153,6 +164,13 @@ function readString(value: unknown, key?: string): string {
 function readStringArray(value: unknown, key: string): string[] {
   const actual = readRecord(value)[key];
   if (!Array.isArray(actual) || actual.some((item) => typeof item !== 'string' || !item.trim())) throw new Error(`应用请求缺少有效数组：${key}`);
+  return actual;
+}
+
+/** 设置数值必须在进入数据层前完成整数校验，避免非开发者面对 SQLite 的底层类型错误。 */
+function readInteger(value: Record<string, unknown>, key: string): number {
+  const actual = value[key];
+  if (typeof actual !== 'number' || !Number.isInteger(actual)) throw new Error(`应用请求缺少有效整数：${key}`);
   return actual;
 }
 

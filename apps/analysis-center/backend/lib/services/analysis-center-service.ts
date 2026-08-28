@@ -32,13 +32,19 @@ export class AnalysisCenterService {
     return discovered;
   }
 
-  public async importPackage(sourcePath: string): Promise<DiagnosticPackage> {
+  /**
+   * 监控器传入的可继续判定会在异步文件检查后、写入数据库前再次确认代次仍有效。
+   * 这样目录被关闭或重配时，旧扫描不会把已失效目录中的包登记到当前工作区。
+   */
+  public async importPackage(sourcePath: string, canContinue: () => boolean = () => true): Promise<DiagnosticPackage> {
     const info = await stat(sourcePath).catch(() => undefined);
+    if (!canContinue()) throw new Error('监控目录配置已更新，已取消旧扫描');
     if (!info?.isFile()) throw new Error('选择的诊断包不存在或不是文件');
     if (!isDiagnosticPackagePath(sourcePath)) {
       if (getDiagnosticPackageFormat(sourcePath) === 'zip') throw new Error('ZIP 诊断包文件名必须以 nas_server_log 开头');
       throw new Error('仅支持 .tgz、.tgz.temp 或文件名以 nas_server_log 开头的 .zip 格式诊断包');
     }
+    if (!canContinue()) throw new Error('监控目录配置已更新，已取消旧扫描');
     return this.registerDiagnosticPackage(sourcePath);
   }
 

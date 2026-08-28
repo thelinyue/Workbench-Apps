@@ -5,26 +5,53 @@ import type { AnalyzerRuleCatalog } from '../analysis/log-analyzer';
 import type { AnalysisTaskRecord, WorkspaceRepository } from '../data/workspace-repository';
 import type { AnalysisResult } from '../analysis-v1/pipeline';
 
+export interface AnalysisWorker {
+  terminate(): Promise<number>;
+  on(event: 'message', listener: (result: { type?: 'progress' | 'completed'; progress?: number; message?: string; succeeded?: boolean; browserPath?: string; analysisResult?: AnalysisResult; errorMessage?: string }) => void): this;
+  once(event: 'error', listener: (error: Error) => void): this;
+  once(event: 'exit', listener: (code: number) => void): this;
+}
+
+export interface AnalysisTaskServiceOptions {
+  createWorker?: (url: URL, options: { workerData: { sourcePath: string; extractDirectory: string } }) => AnalysisWorker;
+}
+
+/** 任务按创建先后执行，保证界面显示的“前方任务数”与实际调度顺序一致。 */
+export function selectNextQueuedTask(tasks: AnalysisTaskRecord[]): AnalysisTaskRecord | undefined {
+  return tasks.filter((task) => task.status === 'queued').sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.id.localeCompare(right.id))[0];
+}
+
 /**
  * 主进程内的分析任务调度器。
  *
- * 任务状态是持久化业务数据，不依赖任何虚拟窗口是否打开。任务单并发执行，避免同时解压大型
+ * 任务状态是持久化业务数据，不依赖任何窗口是否打开。任务单并发执行，避免同时解压大型
  * 归档包导致磁盘抖动；每次实际分析都运行在分析中心私有 worker_threads Worker 中。
+ *
+ * close() 在同步设置 closing 后复用 cancelTask 持久化所有活动状态，再等待分析 Worker 的
+ * terminate Promise 和 queueProcessing。只有两者都结算后 backend 才能解绑监听并关闭 SQLite，
+ * 从而保证 run 的 finally、进度回调和下一轮队列选择不会访问已经关闭的仓储。
  */
 export class AnalysisTaskService extends EventEmitter {
   private readonly cancelledTaskIds = new Set<string>();
-  private processing = false;
-  private activeWorker: Worker | undefined;
+  private queueProcessing: Promise<void> | undefined;
+  private activeWorker: AnalysisWorker | undefined;
   private activeTaskId: string | undefined;
   private activeCancellation: (() => void) | undefined;
+  private activeTermination: Promise<number> | undefined;
+  private closing = false;
+  private closeOperation: Promise<void> | undefined;
 
-  public constructor(private readonly repository: WorkspaceRepository) { super(); }
+  public constructor(
+    private readonly repository: WorkspaceRepository,
+    private readonly options: AnalysisTaskServiceOptions = {}
+  ) { super(); }
 
   /**
    * 将规则快照绑定到任务，而不是在 Worker 中再次读取外部文件。
    * 这样规则编辑器保存后的结果可以按一次分析任务稳定复现，任务执行期间规则变化也不会影响当前任务。
    */
   public async enqueue(packageId: string, scope: 'comprehensive' | 'storage' = 'comprehensive', _legacyRules?: AnalyzerRuleCatalog): Promise<void> {
+    if (this.closing) throw new Error('分析任务服务正在关闭，不能添加新任务');
     const diagnosticPackage = this.repository.getPackage(packageId);
     if (!diagnosticPackage) throw new Error('找不到要分析的诊断包');
     if (diagnosticPackage.status === 'running' || diagnosticPackage.status === 'queued') throw new Error('该诊断包已经在分析队列中');
@@ -34,29 +61,41 @@ export class AnalysisTaskService extends EventEmitter {
     this.repository.upsertPackage(diagnosticPackage);
     this.repository.upsertTask(task);
     this.emit('changed');
-    void this.processQueue();
+    void this.ensureQueueProcessing();
   }
 
   public async enqueueAllPending(_legacyRules?: AnalyzerRuleCatalog): Promise<{ count: number; packageNames: string[] }> {
+    if (this.closing) throw new Error('分析任务服务正在关闭，不能添加新任务');
     const packages = this.repository.listPackages().filter((item) => item.status === 'pending');
     for (const item of packages) await this.enqueue(item.id, 'comprehensive');
     return { count: packages.length, packageNames: packages.map((item) => item.displayName) };
   }
 
   public cancel(taskId: string): void {
+    this.cancelTask(taskId, true);
+  }
+
+  /**
+   * 关闭只改变 queued/running 状态，不删除任何任务、报告或私有数据。
+   * 持久化阶段会继续尝试每个任务；即使个别写入失败，也会等待 Worker 与队列结算后统一报错。
+   */
+  public close(): Promise<void> {
+    if (this.closeOperation) return this.closeOperation;
+    this.closing = true;
+    this.closeOperation = this.closeInternal();
+    return this.closeOperation;
+  }
+
+  private cancelTask(taskId: string, terminateActive: boolean): void {
     const task = this.repository.getTask(taskId);
     if (!task || task.status === 'succeeded' || task.status === 'failed' || task.status === 'cancelled') return;
     this.cancelledTaskIds.add(taskId);
-    if (this.activeTaskId === taskId) {
-      // terminate() 的 exit 事件不会自动结束 Promise；先明确拒绝，保证队列 finally 一定执行。
-      this.activeCancellation?.();
-      this.activeWorker?.terminate().catch(() => undefined);
-    }
     this.repository.upsertTask({ ...task, status: 'cancelled', message: '已取消', progress: task.progress });
     this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'cancelled', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
     const diagnosticPackage = this.repository.getPackage(task.packageId);
     if (diagnosticPackage) { diagnosticPackage.status = 'cancelled'; this.repository.upsertPackage(diagnosticPackage); }
     this.emit('changed');
+    if (terminateActive && this.activeTaskId === taskId) this.requestActiveWorkerTermination();
   }
 
   /** 清理单个历史任务；运行中和排队任务必须先取消。 */
@@ -74,24 +113,32 @@ export class AnalysisTaskService extends EventEmitter {
     return count;
   }
 
+  private ensureQueueProcessing(): Promise<void> {
+    if (this.queueProcessing) return this.queueProcessing;
+    const processing = this.processQueue();
+    this.queueProcessing = processing;
+    const clear = () => { if (this.queueProcessing === processing) this.queueProcessing = undefined; };
+    void processing.then(clear, clear);
+    return processing;
+  }
+
   private async processQueue(): Promise<void> {
-    if (this.processing) return;
-    this.processing = true;
     try {
       while (true) {
-        const task = this.repository.listTasks().find((item) => item.status === 'queued');
+        if (this.closing) return;
+        const task = selectNextQueuedTask(this.repository.listTasks());
         if (!task) return;
         if (this.cancelledTaskIds.has(task.id)) continue;
         await this.run(task);
       }
-    } finally { this.processing = false; }
+    } finally { /* queueProcessing 的共享 Promise 由 ensureQueueProcessing 统一清理。 */ }
   }
 
   private async run(task: AnalysisTaskRecord): Promise<void> {
     const diagnosticPackage = this.repository.getPackage(task.packageId);
     if (!diagnosticPackage) return;
     this.activeTaskId = task.id;
-    const runningTask = { ...task, status: 'running' as const, progress: 0, message: '正在准备诊断包' };
+    const runningTask = { ...task, status: 'running' as const, startedAt: new Date().toISOString(), progress: 0, message: '正在准备诊断包' };
     diagnosticPackage.status = 'running';
     this.repository.upsertTask(runningTask);
     this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'running', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
@@ -122,13 +169,21 @@ export class AnalysisTaskService extends EventEmitter {
       this.repository.upsertTask({ ...runningTask, status: 'failed', progress: 100, message: '分析失败', errorMessage: failureMessage });
       this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'failed', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
       this.repository.saveAnalysisFailure(task.packageId, task.id, inferFailureStage(errorMessage), failureMessage, { sourcePath: diagnosticPackage.sourcePath, displayName: diagnosticPackage.displayName });
-    } finally { this.activeWorker = undefined; this.activeTaskId = undefined; this.activeCancellation = undefined; this.emit('changed'); }
+    } finally {
+      const termination = this.activeTermination;
+      if (termination) await termination.catch(() => undefined);
+      this.activeWorker = undefined;
+      this.activeTaskId = undefined;
+      this.activeCancellation = undefined;
+      this.activeTermination = undefined;
+      this.emit('changed');
+    }
   }
 
   private runWorker(sourcePath: string, extractDirectory: string, onProgress: (progress: number, message: string) => void): Promise<{ browserPath: string; result: AnalysisResult }> {
     return new Promise((resolve, reject) => {
       // 分析中心 backend 以 ESM 发布，必须从实际 entry URL 定位同级 Worker，不能依赖 CommonJS 的 __dirname。
-      const worker = new Worker(new URL('./analysis-worker.js', import.meta.url), { workerData: { sourcePath, extractDirectory } });
+      const worker = (this.options.createWorker ?? createDefaultAnalysisWorker)(new URL('./analysis-worker.js', import.meta.url), { workerData: { sourcePath, extractDirectory } });
       this.activeWorker = worker;
       let settled = false;
       const fail = (error: Error) => { if (!settled) { settled = true; reject(error); } };
@@ -142,6 +197,61 @@ export class AnalysisTaskService extends EventEmitter {
       worker.once('exit', (code) => { if (code !== 0) fail(new Error(`分析引擎工作线程异常退出，退出码：${code}`)); });
     });
   }
+
+  private requestActiveWorkerTermination(): Promise<number> | undefined {
+    // terminate() 的 exit 事件不会自动结束 runWorker Promise；先明确拒绝，保证队列 finally 会执行。
+    this.activeCancellation?.();
+    if (!this.activeWorker) return undefined;
+    if (!this.activeTermination) {
+      this.activeTermination = this.activeWorker.terminate();
+      void this.activeTermination.catch((error) => console.error(`终止分析 Worker 失败：${errorMessage(error)}`));
+    }
+    return this.activeTermination;
+  }
+
+  private async closeInternal(): Promise<void> {
+    const failures: string[] = [];
+    let activeTaskIds: string[] = [];
+    try {
+      activeTaskIds = this.repository.listTasks()
+        .filter((task) => task.status === 'queued' || task.status === 'running')
+        .map((task) => task.id);
+    } catch (error) {
+      const message = `读取活动分析任务失败：${errorMessage(error)}`;
+      console.error(message);
+      failures.push(message);
+      if (this.activeTaskId) activeTaskIds.push(this.activeTaskId);
+    }
+    for (const taskId of activeTaskIds) {
+      try {
+        this.cancelTask(taskId, false);
+      } catch (error) {
+        const message = `关闭时持久化任务 ${taskId} 的取消状态失败：${errorMessage(error)}`;
+        console.error(message);
+        failures.push(message);
+      }
+    }
+
+    let termination: Promise<number> | undefined;
+    try { termination = this.requestActiveWorkerTermination(); }
+    catch (error) { failures.push(`请求终止分析 Worker 失败：${errorMessage(error)}`); }
+    if (termination) {
+      try { await termination; } catch (error) { failures.push(`等待分析 Worker 终止失败：${errorMessage(error)}`); }
+    }
+    const queueDrain = this.queueProcessing;
+    if (queueDrain) {
+      try { await queueDrain; } catch (error) { failures.push(`等待分析队列清空失败：${errorMessage(error)}`); }
+    }
+    if (failures.length > 0) throw new Error(`分析任务服务关闭失败：${failures.join('；')}`);
+  }
+}
+
+function createDefaultAnalysisWorker(url: URL, options: { workerData: { sourcePath: string; extractDirectory: string } }): AnalysisWorker {
+  return new Worker(url, options);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Worker 只返回用户可读的错误，主线程据此归类失败阶段，避免泄露不稳定的底层堆栈。 */

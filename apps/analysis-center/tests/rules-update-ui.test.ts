@@ -17,9 +17,10 @@ describe('分析中心 V1 规则隔离', () => {
     expect(source).toContain('result.evidence');
   });
 
-  it('优先呈现可发送给用户的结论、异常硬盘身份和旧结果降级提示', () => {
-    expect(source).toContain('给用户的结论');
-    expect(source).toContain('给工程师的结论');
+  it('优先呈现可发送给用户的回复、影响范围和旧结果降级提示', () => {
+    expect(source).toContain('建议回复用户');
+    expect(source).toContain('结论摘要');
+    expect(source).toContain('影响范围');
     expect(source).toContain('deviceAssessments');
     expect(source).toContain('请重新分析诊断包以查看硬盘身份和双结论');
   });

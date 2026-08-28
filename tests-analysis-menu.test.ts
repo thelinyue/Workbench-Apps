@@ -22,4 +22,13 @@ describe('分析中心列表快捷菜单', () => {
     expect(source).not.toContain('右键查看更多');
     expect(style).toContain('.overflow-menu');
   });
+
+  it('将下拉操作菜单相对于本行操作区定位', () => {
+    expect(style).toMatch(/\.card-actions\s*\{[^}]*\bposition:\s*relative;/);
+  });
+
+  it('成功和失败的终态诊断包可从更多操作菜单重新分析', () => {
+    expect(source).toContain('重新分析');
+    expect(source).toContain('onAnalyze(item.id)');
+  });
 });

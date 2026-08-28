@@ -4,5 +4,5 @@
     "noEmit": true,
     "rootDir": "../.."
   },
-    "include": ["backend/**/*.ts", "renderer/**/*.ts", "renderer/**/*.tsx", "../../sdk/app-contract.ts", "../../sdk/vite-raw.d.ts"]
+    "include": ["backend/**/*.ts", "renderer/**/*.ts", "renderer/**/*.tsx", "shared/**/*.ts", "../../sdk/app-contract.ts", "../../sdk/vite-raw.d.ts"]
 }

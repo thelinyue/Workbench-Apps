@@ -19,9 +19,16 @@ interface RaidAssessment { resource: string; level?: string; expectedMembers?: n
 
 const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume'])), regex: z.string(), type: z.string() })) });
 const rulePack = rulePackSchema.parse(rulePackJson);
+type V1Source = 'kernel' | 'sysinfo' | 'mdstat' | 'ugvolume';
+type CompiledEventRule = (typeof rulePack.eventRules)[number] & { pattern: RegExp };
+const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume'] as V1Source[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1Source, CompiledEventRule[]>;
+// 内核来源的大多数行是无异常心跳；该集合覆盖当前所有 kernel 规则的触发词，预筛选命中后仍由原规则决定诊断结果。
+const kernelEventCandidate = /\b(?:error|timeout|timed out|reset controller|device not ready|hard resetting|failed|link(?: is)? down|not recognized|not found|medium|uncorrectable|panic|out of memory|oom-kill|killed process|watchdog|uncleanly|orphan inode|recovery complete|corrupt\w*|read-only)\b/i;
+
+export interface V1Progress { processedFiles: number; totalFiles: number; progress: number; }
 
 /** V1 只分析白名单来源，所有后续规则只消费这里生成的结构化事件。 */
-export function analyzeV1Sources(input: { sourceName: string; files: Record<string, string> }): AnalysisResult {
+export function analyzeV1Sources(input: { sourceName: string; files: Record<string, string>; onProgress?: (progress: V1Progress) => void }): AnalysisResult {
   const started = new Date();
   const evidence: Evidence[] = [];
   const events: NormalizedEvent[] = [];
@@ -31,6 +38,12 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   const deviceIdentities = new Map<string, DeviceIdentity>();
   let processedLines = 0;
   let evidenceNumber = 0;
+  const sources = Object.entries(input.files).filter(([sourceFile]) => classify(sourceFile));
+  let lastProgress = -1;
+  const reportProgress = (processedFiles: number, processedCharacters = 0, currentLength = 0, force = false) => {
+    const progress = Math.min(100, Math.floor(((processedFiles + (currentLength ? processedCharacters / currentLength : 0)) / Math.max(sources.length, 1)) * 100));
+    if (force || progress > lastProgress) { lastProgress = progress; input.onProgress?.({ processedFiles, totalFiles: sources.length, progress }); }
+  };
   const add = (ruleId: string, type: string, sourceFile: string, line: string, lineNumber: number | undefined, resource?: string, attributes: Record<string, string | number> = {}) => {
     const time = parseTimestamp(line);
     const id = `evidence-${++evidenceNumber}`;
@@ -38,30 +51,39 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
     events.push({ id: `event-${evidenceNumber}`, ruleId, type, resource, timestamp: time.timestamp, timestampPrecision: time.precision, timestampConfidence: time.confidence, evidenceId: id, attributes });
   };
 
-  for (const [sourceFile, content] of Object.entries(input.files)) {
+  for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+    const [sourceFile, content] = sources[sourceIndex];
     const source = classify(sourceFile);
     if (!source) continue;
-    if (source === 'sysinfo') parseSysinfo(content, sourceFile, add, deviceIdentities);
+    if (source === 'sysinfo') {
+      parseSysinfo(content, sourceFile, add, deviceIdentities);
+      reportProgress(sourceIndex + 1, 0, 0, true);
+    }
     else {
-      const lines = content.split(/\r?\n/);
       const mdstatContext: { currentArray?: string } = {};
-      processedLines += lines.length;
-      for (let index = 0; index < lines.length; index += 1) {
-        const line = lines[index];
+      let lineNumber = 0;
+      forEachLine(content, (line, endOffset) => {
+        lineNumber += 1;
+        processedLines += 1;
+        if (source === 'kernel' && !kernelEventCandidate.test(line)) {
+          if (lineNumber % 1024 === 0) reportProgress(sourceIndex, endOffset, content.length);
+          return;
+        }
         const emittedTypes = new Set<string>();
-        for (const rule of rulePack.eventRules) {
-          if (!rule.sources.includes(source)) continue;
+        for (const rule of rulesBySource[source]) {
           if (source === 'mdstat' && rule.type === 'raid.degraded') continue;
-          const match = new RegExp(rule.regex, 'i').exec(line);
+          const match = rule.pattern.exec(line);
           if (!match || emittedTypes.has(rule.type)) continue;
           const device = match.groups?.device;
           const resource = device ? `/dev/${device.replace(/\d+$/, '')}` : source === 'ugvolume' && rule.type === 'filesystem.error' ? poolFromMountLine(line) : undefined;
-          add(rule.id, rule.type, sourceFile, line, index + 1, resource);
+          add(rule.id, rule.type, sourceFile, line, lineNumber, resource);
           emittedTypes.add(rule.type);
         }
-        if (source === 'mdstat') parseMdstatLine(line, sourceFile, index + 1, add, deviceArrays, raidAssessments, mdstatContext);
+        if (source === 'mdstat') parseMdstatLine(line, sourceFile, lineNumber, add, deviceArrays, raidAssessments, mdstatContext);
         if (source === 'ugvolume') parseTopology(line, topology);
-      }
+        if (lineNumber % 1024 === 0) reportProgress(sourceIndex, endOffset, content.length);
+      });
+      reportProgress(sourceIndex + 1, 0, 0, true);
     }
   }
   for (const event of events.filter((item) => item.type === 'raid.degraded')) {
@@ -71,14 +93,15 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   const findings = aggregateFindings(events, evidence, topology);
   const deviceAssessments = buildDeviceAssessments(deviceIdentities, events);
   const { diagnoses, recommendations } = composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments);
-  const missingData = ['sysinfo', 'mdstat'].filter((source) => !Object.keys(input.files).some((file) => classify(file) === source));
+  const missingData = ['sysinfo', 'mdstat'].filter((source) => !sources.some(([file]) => classify(file) === source));
   const ended = new Date();
   const criticalCount = diagnoses.filter((item) => item.severity === 'critical').length;
   const warningCount = diagnoses.filter((item) => item.severity === 'warning').length;
-  return { schemaVersion: 1, id: `analysis-${started.getTime()}`, status: missingData.length ? 'partial' : 'completed', summary: { criticalCount, warningCount, infoCount: diagnoses.filter((item) => item.severity === 'info').length, primaryDiagnosisId: diagnoses[0]?.id, complete: missingData.length === 0 }, diagnoses, findings, evidence, deviceAssessments, recommendations, metadata: { source: input.sourceName, startTime: started.toISOString(), completeTime: ended.toISOString(), duration: ended.getTime() - started.getTime(), processedFiles: Object.keys(input.files).filter((file) => classify(file)).length, processedLines, processedEvents: events.length, analyzerVersion: '1.0.0', rulePackVersion: rulePack.version, missingData } };
+  return { schemaVersion: 1, id: `analysis-${started.getTime()}`, status: missingData.length ? 'partial' : 'completed', summary: { criticalCount, warningCount, infoCount: diagnoses.filter((item) => item.severity === 'info').length, primaryDiagnosisId: diagnoses[0]?.id, complete: missingData.length === 0 }, diagnoses, findings, evidence, deviceAssessments, recommendations, metadata: { source: input.sourceName, startTime: started.toISOString(), completeTime: ended.toISOString(), duration: ended.getTime() - started.getTime(), processedFiles: sources.length, processedLines, processedEvents: events.length, analyzerVersion: '1.0.0', rulePackVersion: rulePack.version, missingData } };
 }
 
-function classify(file: string): 'kernel' | 'sysinfo' | 'mdstat' | 'ugvolume' | undefined { const name = file.replaceAll('\\', '/').toLowerCase(); if (name.endsWith('sysinfo.json')) return 'sysinfo'; if (name.endsWith('mdstat.log')) return 'mdstat'; if (name.endsWith('ugvolume.log')) return 'ugvolume'; return /(?:^|\/)(?:kern(?:\.log(?:\.\d+)?)?|syslog(?:\.\d+)?|journal[^/]*|dmesg[^/]*)$/.test(name) ? 'kernel' : undefined; }
+function forEachLine(content: string, callback: (line: string, endOffset: number) => void): void { let start = 0; for (let index = 0; index <= content.length; index += 1) { if (index !== content.length && content.charCodeAt(index) !== 10) continue; const end = index > start && content.charCodeAt(index - 1) === 13 ? index - 1 : index; callback(content.slice(start, end), index); start = index + 1; } }
+function classify(file: string): V1Source | undefined { const name = file.replaceAll('\\', '/').toLowerCase(); if (name.endsWith('sysinfo.json')) return 'sysinfo'; if (name.endsWith('mdstat.log')) return 'mdstat'; if (name.endsWith('ugvolume.log')) return 'ugvolume'; return /(?:^|\/)(?:kern(?:\.log(?:\.\d+)?)?|syslog(?:\.\d+)?|journal[^/]*|dmesg[^/]*)$/.test(name) ? 'kernel' : undefined; }
 function parseTimestamp(line: string): { timestamp?: string; precision: TimestampPrecision; confidence: Confidence } { const match = line.match(/\b(20\d\d-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?)\b/); return match ? { timestamp: new Date(match[1].replace(' ', 'T')).toISOString(), precision: 'exact', confidence: 'confirmed' } : { precision: 'unknown', confidence: 'low' }; }
 /**
  * sysinfo 的 SMART 报告与 disk_info 是同级字段，递归时必须显式继承 disk_info.dev_name。
