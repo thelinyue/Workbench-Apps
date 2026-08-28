@@ -3,11 +3,12 @@ import {
   createDefaultSplitLayout,
   getKeyboardPaneWidth,
   loadSplitLayout,
+  resolvePaneVisibility,
   resizePane
 } from '../renderer/split-pane-layout';
 
 describe('SSH 工作区 Split Pane 布局', () => {
-  it('按窗口比例生成宽屏布局，并在窄窗口默认收起文件抽屉', () => {
+  it('按窗口比例生成宽屏布局，并在窄窗口默认收起文件栏', () => {
     expect(createDefaultSplitLayout(1440)).toEqual({
       leftWidth: 274,
       rightWidth: 475,
@@ -25,10 +26,34 @@ describe('SSH 工作区 Split Pane 布局', () => {
   it('拖拽侧栏时同时遵守侧栏范围和 Terminal 最小宽度', () => {
     const layout = { leftWidth: 274, rightWidth: 475, leftHidden: false, rightHidden: false };
 
-    expect(resizePane(layout, 'left', 600, 1440, false).leftWidth).toBe(420);
-    expect(resizePane(layout, 'left', 40, 1440, false).leftWidth).toBe(200);
-    expect(resizePane(layout, 'right', 560, 1280, false).rightWidth).toBe(514);
-    expect(resizePane(layout, 'left', 400, 960, true).leftWidth).toBe(400);
+    expect(resizePane(layout, 'left', 600, 1440).leftWidth).toBe(420);
+    expect(resizePane(layout, 'left', 40, 1440).leftWidth).toBe(200);
+    expect(resizePane(layout, 'right', 560, 1280).rightWidth).toBe(514);
+    expect(resizePane(layout, 'left', 400, 960).leftWidth).toBe(200);
+  });
+
+  it('窗口空间不足时优先自动隐藏文件栏，仍不足再隐藏设备栏', () => {
+    const layout = { leftWidth: 200, rightWidth: 320, leftHidden: false, rightHidden: false };
+
+    expect(resolvePaneVisibility(layout, 1200)).toEqual({ leftHidden: false, rightHidden: false });
+    expect(resolvePaneVisibility(layout, 960)).toEqual({ leftHidden: false, rightHidden: true });
+    expect(resolvePaneVisibility(layout, 640)).toEqual({ leftHidden: true, rightHidden: true });
+  });
+
+  it('窗口恢复宽度后恢复用户的侧栏显示偏好', () => {
+    const layout = { leftWidth: 200, rightWidth: 320, leftHidden: false, rightHidden: false };
+
+    resolvePaneVisibility(layout, 960);
+
+    expect(layout).toEqual({ leftWidth: 200, rightWidth: 320, leftHidden: false, rightHidden: false });
+    expect(resolvePaneVisibility(layout, 1200)).toEqual({ leftHidden: false, rightHidden: false });
+  });
+
+  it('空间不足时可临时切换优先保留的侧栏', () => {
+    const layout = { leftWidth: 200, rightWidth: 320, leftHidden: false, rightHidden: false };
+
+    expect(resolvePaneVisibility(layout, 960, 'right')).toEqual({ leftHidden: true, rightHidden: false });
+    expect(layout).toEqual({ leftWidth: 200, rightWidth: 320, leftHidden: false, rightHidden: false });
   });
 
   it('方向键按分隔线移动方向调整左右侧栏', () => {

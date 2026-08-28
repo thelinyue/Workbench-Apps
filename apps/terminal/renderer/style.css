@@ -49,7 +49,6 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .workspace-body.left-pane-hidden { grid-template-columns: 0 0 minmax(480px, 1fr) 6px var(--right-pane-width); }
 .workspace-body.right-pane-hidden { grid-template-columns: var(--left-pane-width) 6px minmax(480px, 1fr) 0 0; }
 .workspace-body.left-pane-hidden.right-pane-hidden { grid-template-columns: 0 0 minmax(480px, 1fr) 0 0; }
-.file-drawer-scrim { display: none; }
 
 .device-sidebar { grid-column: 1; min-width: 0; min-height: 0; overflow: auto; background: var(--surface); }
 .connection-group { padding: 10px 10px 12px; }
@@ -196,15 +195,10 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 @keyframes loading-pulse { from { opacity: .55; } to { opacity: 1; } }
 
 @media (max-width: 1279px) {
-  .workspace-body { grid-template-columns: var(--left-pane-width) 6px minmax(0, 1fr); }
-  .workspace-body.left-pane-hidden { grid-template-columns: 0 0 minmax(0, 1fr); }
-  .terminal-workspace { grid-column: 3; }
-  .file-panel { position: absolute; z-index: 20; inset: 0 0 0 auto; width: min(430px, calc(100% - 58px)); border-left: 1px solid var(--border-strong); box-shadow: -14px 0 36px rgb(28 42 62 / 16%); transform: translateX(100%); visibility: hidden; }
-  .file-panel.is-open { transform: translateX(0); visibility: visible; }
-  .drawer-close { display: inline-flex; }
-  .desktop-pane-close { display: none; }
-  .file-drawer-scrim { display: block; position: absolute; z-index: 19; inset: 0; visibility: hidden; background: rgb(24 34 49 / 28%); opacity: 0; }
-  .file-drawer-scrim.visible { visibility: visible; opacity: 1; }
+  .workspace-body { grid-template-columns: var(--left-pane-width) 6px minmax(0, 1fr) 6px var(--right-pane-width); }
+  .workspace-body.left-pane-hidden { grid-template-columns: 0 0 minmax(0, 1fr) 6px var(--right-pane-width); }
+  .workspace-body.right-pane-hidden { grid-template-columns: var(--left-pane-width) 6px minmax(0, 1fr) 0 0; }
+  .workspace-body.left-pane-hidden.right-pane-hidden { grid-template-columns: 0 0 minmax(0, 1fr) 0 0; }
 }
 
 @media (max-width: 1000px) {
@@ -218,7 +212,7 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .file-panel, .file-drawer-scrim, button { transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 140ms ease, transform 140ms ease; }
+  button { transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 140ms ease, transform 140ms ease; }
 }
 
 @media (prefers-reduced-motion: reduce) {

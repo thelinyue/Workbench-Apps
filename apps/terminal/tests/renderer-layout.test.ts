@@ -17,14 +17,14 @@ describe('SSH 终端页面布局', () => {
     expect(source).toContain('<HostKeyDialog');
   });
 
-  it('在窄窗口把文件区切换为右侧抽屉并保留终端弹性轨道', () => {
-    expect(styles).toContain('.file-drawer-scrim { display: none; }');
+  it('在窄窗口让文件区继续占据 Split Pane，不得覆盖终端内容', () => {
     expect(styles).toContain('@media (max-width: 1279px)');
-    expect(styles).toContain('.file-drawer-scrim { display: block; position: absolute;');
-    expect(styles).toContain('grid-template-columns: var(--left-pane-width) 6px minmax(0, 1fr)');
+    expect(styles).toContain('grid-template-columns: var(--left-pane-width) 6px minmax(0, 1fr) 6px var(--right-pane-width)');
     expect(styles).toContain('.workspace-body.left-pane-hidden');
-    expect(styles).toContain('.file-panel.is-open');
-    expect(styles).toContain('transform: translateX(0)');
+    expect(styles).not.toContain('.file-drawer-scrim');
+    expect(styles).not.toMatch(/@media \(max-width: 1279px\)[\s\S]*?\.file-panel \{[^}]*position: absolute;/);
+    expect(source).not.toContain('file-drawer-scrim');
+    expect(source).toContain('<SplitPaneHandle side="right"');
   });
 
   it('文件列表占满文件侧栏的剩余高度', () => {

@@ -7,6 +7,11 @@ export interface SplitPaneLayout {
   rightHidden: boolean;
 }
 
+export interface PaneVisibility {
+  leftHidden: boolean;
+  rightHidden: boolean;
+}
+
 interface LayoutStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -23,7 +28,7 @@ export const COMPACT_LAYOUT_WIDTH = 1280;
 
 /**
  * 根据当前窗口生成侧栏初始比例。这里只定义首次打开的起点，用户拖拽后的值由本地布局记录恢复，
- * 因此侧栏不是固定轨道；窄窗口默认收起文件抽屉，避免启动时遮挡 Terminal。
+ * 因此侧栏不是固定轨道；窄窗口默认收起文件栏，优先把空间留给 Terminal。
  */
 export function createDefaultSplitLayout(viewportWidth: number): SplitPaneLayout {
   return {
@@ -35,27 +40,51 @@ export function createDefaultSplitLayout(viewportWidth: number): SplitPaneLayout
 }
 
 /**
- * 调整单侧宽度时，除侧栏自身上下限外，还必须为 Terminal 和分隔线预留空间。
- * 紧凑布局中的文件区是覆盖式抽屉，不参与左侧栏的宽度计算。
+ * 调整单侧宽度时，除侧栏自身上下限外，还必须为 Terminal、另一侧栏和分隔线预留空间。
+ * 文件栏在所有窗口宽度下都参与 Split Pane 布局，因此不能再按覆盖式抽屉忽略其宽度。
  */
 export function resizePane(
   layout: SplitPaneLayout,
   side: SplitPaneSide,
   requestedWidth: number,
-  availableWidth: number,
-  compact: boolean
+  availableWidth: number
 ): SplitPaneLayout {
-  const otherWidth = compact
-    ? 0
-    : side === 'left'
-      ? (layout.rightHidden ? 0 : layout.rightWidth)
-      : (layout.leftHidden ? 0 : layout.leftWidth);
-  const splitterCount = compact ? 1 : 2;
+  const otherWidth = side === 'left'
+    ? (layout.rightHidden ? 0 : layout.rightWidth)
+    : (layout.leftHidden ? 0 : layout.leftWidth);
+  const splitterCount = 1 + (otherWidth > 0 ? 1 : 0);
   const availableForPane = availableWidth - otherWidth - TERMINAL_PANE_MIN - splitterCount * SPLITTER_SIZE;
   const minimum = side === 'left' ? LEFT_PANE_MIN : RIGHT_PANE_MIN;
   const maximum = Math.min(side === 'left' ? LEFT_PANE_MAX : RIGHT_PANE_MAX, Math.max(minimum, availableForPane));
   const width = clamp(requestedWidth, minimum, maximum);
   return side === 'left' ? { ...layout, leftWidth: width } : { ...layout, rightWidth: width };
+}
+
+/**
+ * 窗口缩小时不改写用户保存的显示偏好，只计算当前应用的可见状态。
+ * Terminal 是主工作区：空间不足时先收起非优先侧栏，仍不足再收起另一侧；
+ * 窗口恢复后函数会自然返回用户原有的显示状态。
+ */
+export function resolvePaneVisibility(
+  layout: SplitPaneLayout,
+  availableWidth: number,
+  preferredPane: SplitPaneSide = 'left'
+): PaneVisibility {
+  let leftHidden = layout.leftHidden;
+  let rightHidden = layout.rightHidden;
+  const requiredWidth = () => TERMINAL_PANE_MIN
+    + (leftHidden ? 0 : layout.leftWidth + SPLITTER_SIZE)
+    + (rightHidden ? 0 : layout.rightWidth + SPLITTER_SIZE);
+
+  if (preferredPane === 'right') {
+    if (requiredWidth() > availableWidth && !leftHidden) leftHidden = true;
+    if (requiredWidth() > availableWidth && !rightHidden) rightHidden = true;
+  } else {
+    if (requiredWidth() > availableWidth && !rightHidden) rightHidden = true;
+    if (requiredWidth() > availableWidth && !leftHidden) leftHidden = true;
+  }
+
+  return { leftHidden, rightHidden };
 }
 
 /** 方向键移动的是分隔线本身，因此右侧分隔线向右移动时右侧栏会变窄。 */

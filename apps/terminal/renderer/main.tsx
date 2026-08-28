@@ -10,12 +10,12 @@ import { AppHostClient } from './host-api';
 import { HostKeyDialog, type HostKeyRequest } from './host-key-dialog';
 import { SplitPaneHandle } from './split-pane-handle';
 import {
-  COMPACT_LAYOUT_WIDTH,
   LEFT_PANE_MAX,
   LEFT_PANE_MIN,
   RIGHT_PANE_MAX,
   RIGHT_PANE_MIN,
   loadSplitLayout,
+  resolvePaneVisibility,
   resizePane,
   saveSplitLayout,
   type SplitPaneSide
@@ -37,9 +37,9 @@ function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [transfers, setTransfers] = useState<TransferTask[]>([]);
   const [activeId, setActiveId] = useState<string>();
-  const [compactLayout, setCompactLayout] = useState(() => window.innerWidth < COMPACT_LAYOUT_WIDTH);
   const [splitLayout, setSplitLayout] = useState(() => loadSplitLayout(window.localStorage, window.innerWidth));
-  const [filesOpen, setFilesOpen] = useState(false);
+  const [workspaceWidth, setWorkspaceWidth] = useState(window.innerWidth);
+  const [preferredPane, setPreferredPane] = useState<SplitPaneSide>('left');
   const [transfersOpen, setTransfersOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogInitial, setDialogInitial] = useState<ConnectionProfile | RecentConnection>();
@@ -78,15 +78,21 @@ function App() {
   }, [splitLayout]);
 
   useEffect(() => {
-    const media = window.matchMedia(`(max-width: ${COMPACT_LAYOUT_WIDTH - 1}px)`);
-    const update = () => { setCompactLayout(media.matches); if (!media.matches) setFilesOpen(false); };
-    update();
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const updateWidth = () => setWorkspaceWidth(workspace.clientWidth);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(workspace);
+    return () => observer.disconnect();
   }, []);
 
   const activeSession = useMemo(() => sessions.find((session) => session.id === activeId), [sessions, activeId]);
   const activeTransfers = transfers.filter((task) => task.state === 'queued' || task.state === 'running' || task.state === 'paused').length;
+  const paneVisibility = useMemo(
+    () => resolvePaneVisibility(splitLayout, workspaceWidth, preferredPane),
+    [splitLayout, workspaceWidth, preferredPane]
+  );
 
   const openNewDialog = () => { setDialogInitial(undefined); setDialogOpen(true); };
   const openEditDialog = (profile: ConnectionProfile | RecentConnection) => { setDialogInitial(profile); setDialogOpen(true); };
@@ -169,15 +175,33 @@ function App() {
   const invokeTransfer = (method: string, id?: string) => void host.invoke(method, id ? { id } : {}).catch(showError);
   const resizeSide = (side: SplitPaneSide, width: number) => {
     const availableWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
-    setSplitLayout((current) => resizePane(current, side, width, availableWidth, compactLayout));
+    setSplitLayout((current) => {
+      const effective = { ...current, ...resolvePaneVisibility(current, availableWidth, preferredPane) };
+      const resized = resizePane(effective, side, width, availableWidth);
+      return side === 'left' ? { ...current, leftWidth: resized.leftWidth } : { ...current, rightWidth: resized.rightWidth };
+    });
+  };
+  const toggleDevicePanel = () => {
+    setPreferredPane('left');
+    if (paneVisibility.leftHidden && !splitLayout.leftHidden) return;
+    setSplitLayout((current) => ({ ...current, leftHidden: !current.leftHidden }));
   };
   const toggleFilePanel = () => {
-    if (compactLayout) setFilesOpen((value) => !value);
-    else setSplitLayout((current) => ({ ...current, rightHidden: !current.rightHidden }));
+    if (!paneVisibility.rightHidden) {
+      setPreferredPane('left');
+      setSplitLayout((current) => ({ ...current, rightHidden: true }));
+      return;
+    }
+    setPreferredPane('right');
+    setSplitLayout((current) => {
+      const opening = { ...current, rightHidden: false };
+      const resized = resizePane({ ...opening, leftHidden: true }, 'right', opening.rightWidth, workspaceWidth);
+      return { ...opening, rightWidth: resized.rightWidth };
+    });
   };
   const closeFilePanel = () => {
-    if (compactLayout) setFilesOpen(false);
-    else setSplitLayout((current) => ({ ...current, rightHidden: true }));
+    setPreferredPane('left');
+    setSplitLayout((current) => ({ ...current, rightHidden: true }));
   };
 
   function showError(caught: unknown) {
@@ -186,28 +210,27 @@ function App() {
   }
 
   const splitStyle = {
-    '--left-pane-width': `${splitLayout.leftHidden ? 0 : splitLayout.leftWidth}px`,
-    '--right-pane-width': `${splitLayout.rightHidden ? 0 : splitLayout.rightWidth}px`
+    '--left-pane-width': `${paneVisibility.leftHidden ? 0 : splitLayout.leftWidth}px`,
+    '--right-pane-width': `${paneVisibility.rightHidden ? 0 : splitLayout.rightWidth}px`
   } as CSSProperties;
-  const filePanelOpen = compactLayout ? filesOpen : !splitLayout.rightHidden;
+  const filePanelOpen = !paneVisibility.rightHidden;
 
   return <main className="terminal-app-shell">
     <header className="workspace-toolbar">
       <div className="toolbar-primary-zone">
         <button className="primary-button" type="button" onClick={openNewDialog}><Plus size={17} aria-hidden="true" />新建连接</button>
-        <button className="icon-button pane-visibility-button" type="button" aria-label={splitLayout.leftHidden ? '显示设备栏' : '隐藏设备栏'} title={splitLayout.leftHidden ? '显示设备栏' : '隐藏设备栏'} onClick={() => setSplitLayout((current) => ({ ...current, leftHidden: !current.leftHidden }))}>{splitLayout.leftHidden ? <PanelLeftOpen size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}</button>
+        <button className="icon-button pane-visibility-button" type="button" aria-label={paneVisibility.leftHidden ? '显示设备栏' : '隐藏设备栏'} title={paneVisibility.leftHidden ? '显示设备栏' : '隐藏设备栏'} onClick={toggleDevicePanel}>{paneVisibility.leftHidden ? <PanelLeftOpen size={18} aria-hidden="true" /> : <PanelLeftClose size={18} aria-hidden="true" />}</button>
       </div>
       <div className="toolbar-group">
         <button className={`secondary-button${filePanelOpen ? ' selected' : ''}`} type="button" aria-pressed={filePanelOpen} onClick={toggleFilePanel}><Files size={17} aria-hidden="true" />文件</button>
       </div>
     </header>
-    <section ref={workspaceRef} className={`workspace-body${splitLayout.leftHidden ? ' left-pane-hidden' : ''}${splitLayout.rightHidden ? ' right-pane-hidden' : ''}`} style={splitStyle}>
-      {!splitLayout.leftHidden && <DeviceSidebar collapsed={false} connections={connections} onNew={openNewDialog} onConnect={(profile) => void connectDevice(profile)} onEdit={openEditDialog} onDelete={(profile) => void deleteProfile(profile).catch(showError)} onClearRecent={() => void host.invoke('connections.clearRecent').then(refreshConnections).catch(showError)} />}
-      {!splitLayout.leftHidden && <SplitPaneHandle side="left" value={splitLayout.leftWidth} minimum={LEFT_PANE_MIN} maximum={LEFT_PANE_MAX} onResize={(width) => resizeSide('left', width)} />}
+    <section ref={workspaceRef} className={`workspace-body${paneVisibility.leftHidden ? ' left-pane-hidden' : ''}${paneVisibility.rightHidden ? ' right-pane-hidden' : ''}`} style={splitStyle}>
+      {!paneVisibility.leftHidden && <DeviceSidebar collapsed={false} connections={connections} onNew={openNewDialog} onConnect={(profile) => void connectDevice(profile)} onEdit={openEditDialog} onDelete={(profile) => void deleteProfile(profile).catch(showError)} onClearRecent={() => void host.invoke('connections.clearRecent').then(refreshConnections).catch(showError)} />}
+      {!paneVisibility.leftHidden && <SplitPaneHandle side="left" value={splitLayout.leftWidth} minimum={LEFT_PANE_MIN} maximum={LEFT_PANE_MAX} onResize={(width) => resizeSide('left', width)} />}
       <TerminalWorkspace host={host} sessions={sessions} activeId={activeId} onActive={setActiveId} onDisconnect={(id) => void disconnect(id)} onReconnect={(id) => void host.invoke<{ id: string }>('sessions.reconnect', { id }).then(() => setActiveId(id)).catch(showError)} onNew={openNewDialog} />
-      {!compactLayout && !splitLayout.rightHidden && <SplitPaneHandle side="right" value={splitLayout.rightWidth} minimum={RIGHT_PANE_MIN} maximum={RIGHT_PANE_MAX} onResize={(width) => resizeSide('right', width)} />}
-      {compactLayout && <div className={`file-drawer-scrim${filesOpen ? ' visible' : ''}`} onClick={() => setFilesOpen(false)} />}
-      {(compactLayout || !splitLayout.rightHidden) && <FilePanel
+      {!paneVisibility.rightHidden && <SplitPaneHandle side="right" value={splitLayout.rightWidth} minimum={RIGHT_PANE_MIN} maximum={RIGHT_PANE_MAX} onResize={(width) => resizeSide('right', width)} />}
+      {!paneVisibility.rightHidden && <FilePanel
         host={host}
         session={activeSession}
         open={filePanelOpen}

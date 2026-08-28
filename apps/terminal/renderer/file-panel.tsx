@@ -90,10 +90,11 @@ export function FilePanel({ host, session, open, headerActions, onClose }: FileP
       <div><strong>文件</strong>{session && <small>{session.title}</small>}</div>
       <div className="panel-heading-actions">{headerActions}<button className="icon-button drawer-close" type="button" aria-label="关闭文件面板" title="关闭文件面板" onClick={onClose}><X size={17} aria-hidden="true" /></button></div>
     </header>
-    {session && <div className="integration-row">
-      <label><input type="checkbox" checked={session.integration !== 'independent'} disabled={!connected} onChange={(event) => void host.invoke('sessions.integration', { id: session.id, enabled: event.target.checked })} /><span>{session.integration === 'following' ? '跟随终端当前目录' : session.integration === 'pending' ? '正在确认目录跟随' : '独立导航'}</span></label>
-      {session.integration === 'independent' && session.message && <small title={session.message}>{session.message}</small>}
-    </div>}
+    <div className="integration-row">
+      <label><input type="checkbox" checked={session?.integration === 'following' || session?.integration === 'pending'} disabled={!connected} onChange={(event) => { if (session) void host.invoke('sessions.integration', { id: session.id, enabled: event.target.checked }); }} /><span>跟随终端当前目录</span></label>
+      {session?.integration === 'pending' && <small>正在确认目录跟随</small>}
+      {session?.integration === 'independent' && <small title={session.message ?? '独立导航'}>{session.message ?? '独立导航'}</small>}
+    </div>
     <div className="path-toolbar">
       <button className="icon-button" type="button" aria-label="返回上级目录" title="返回上级目录" disabled={!connected || path === '/'} onClick={() => void load(parentPath)}><ArrowUp size={16} aria-hidden="true" /></button>
       <input aria-label="远端路径" value={pathInput} disabled={!connected} onChange={(event) => setPathInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void load(pathInput); }} />

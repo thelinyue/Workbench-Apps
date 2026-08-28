@@ -104,6 +104,17 @@ describe('SSH 工作区组件', () => {
     expect(markup).toContain('跟随终端当前目录');
   });
 
+  it('未选择会话时仍显示禁用的目录跟随勾选框', () => {
+    const markup = renderToStaticMarkup(createElement(FilePanel, {
+      host: { invoke: async () => undefined, onEvent: () => () => undefined } as never,
+      open: true,
+      onClose: () => undefined
+    }));
+
+    expect(markup).toContain('<input type="checkbox" disabled=""/>');
+    expect(markup).toContain('<span>跟随终端当前目录</span>');
+  });
+
   it('没有凭据 ID 的已保存设备仍保持编辑身份和保存选项', () => {
     const markup = renderToStaticMarkup(createElement(ConnectionDialog, {
       open: true,
