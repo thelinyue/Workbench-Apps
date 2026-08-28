@@ -124,6 +124,7 @@ h1, h2, h3, p { margin: 0; }
 .result-toolbar { display: flex; min-height: 44px; margin-bottom: 12px; align-items: center; gap: 10px; }
 .result-toolbar > strong { min-width: 0; flex: 1; overflow: hidden; color: #1b2b42; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
 .result-toolbar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
+.sysinfo-report-button { min-width: 142px; justify-content: center; white-space: nowrap; }
 .result-more { position: relative; }
 .result-more .overflow-menu { top: 38px; }
 .result-toolbar-actions > button:not(.icon-button), .icon-text-button { display: inline-flex; align-items: center; gap: 6px; }

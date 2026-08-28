@@ -2,16 +2,11 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import type { DiagnosticPackageFormat } from '../domain/diagnostic-package';
+import { parseDmidecodeMemory, type MemoryModule } from '../parsers/dmidecode-memory';
 import type { AnalysisResult } from './log-analyzer';
 
+export type { MemoryModule } from '../parsers/dmidecode-memory';
 export type HealthLevel = 'critical' | 'attention' | 'normal' | 'unknown';
-
-/** 原始诊断包中的一条内存条，字段缺失时保留空字符串以便报告降级展示。 */
-export interface MemoryModule {
-  size: string;
-  manufacturer: string;
-  model: string;
-}
 
 /** 将 sysinfo.json 中不同版本的网卡快照规范化为报告使用的统一模型。 */
 export interface NetworkInterfaceCard {
@@ -137,8 +132,9 @@ async function parseJson(path: string): Promise<Record<string, unknown>> {
 function extractMemory(info: Record<string, unknown>, dmi: string): MemoryModule[] {
   const modules: MemoryModule[] = [];
   for (const value of findValues(info, ['memory', 'memory_info', 'memory_devices', 'memory_modules', 'ram'])) collectMemoryModules(value, modules);
-  collectDmiMemory(dmi, modules);
-  return deduplicateMemory(modules);
+  const dmiModules = parseDmidecodeMemory(dmi);
+  const dmiKeys = new Set(dmiModules.map(memoryKey));
+  return [...deduplicateMemory(modules).filter((module) => !dmiKeys.has(memoryKey(module))), ...dmiModules];
 }
 
 function collectMemoryModules(value: unknown, output: MemoryModule[]): void {
@@ -164,38 +160,18 @@ function parseMemoryModule(value: Record<string, unknown>): MemoryModule | null 
   return module.size && !/^no module installed$/i.test(module.size) ? module : null;
 }
 
-function collectDmiMemory(content: string, output: MemoryModule[]): void {
-  if (!content) return;
-  let current: MemoryModule | null = null;
-  const flush = () => {
-    if (current?.size && !/^no module installed$/i.test(current.size)) output.push(current);
-    current = null;
-  };
-  content.split(/\r?\n/).forEach((line) => {
-    if (/Memory Device/i.test(line)) {
-      flush();
-      current = { size: '', manufacturer: '', model: '' };
-      return;
-    }
-    if (!current) return;
-    const match = line.match(/^\s*(Size|Manufacturer|Part Number|Model):\s*(.+?)\s*$/i);
-    if (!match) return;
-    const field = match[1].toLowerCase();
-    if (field === 'size') current.size = match[2];
-    else if (field === 'manufacturer') current.manufacturer = match[2];
-    else current.model = match[2];
-  });
-  flush();
-}
-
 function deduplicateMemory(modules: MemoryModule[]): MemoryModule[] {
   const seen = new Set<string>();
   return modules.filter((module) => {
-    const key = `${module.size}\u0000${module.manufacturer}\u0000${module.model}`;
+    const key = memoryKey(module);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+}
+
+function memoryKey(module: MemoryModule): string {
+  return `${module.size}\u0000${module.manufacturer}\u0000${module.model}`;
 }
 
 function extractNetworks(info: Record<string, unknown>, raw: string): NetworkInterfaceCard[] {

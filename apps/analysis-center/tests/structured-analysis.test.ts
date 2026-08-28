@@ -51,12 +51,32 @@ describe('结构化存储分析', () => {
           ]
         }]
       },
-      dmidecode: 'Memory Device\n\tSize: 16 GB\n\tManufacturer: Example\n\tPart Number: M-16\n'
+      dmidecode: [
+        'Memory Device',
+        '\tSize: 16 GB',
+        '\tManufacturer: Example',
+        '\tPart Number: M-16   ',
+        'Memory Device',
+        '\tSize: No Module Installed',
+        '\tManufacturer: Empty Slot',
+        'Memory Device',
+        '\tSize: 16 GB',
+        '\tManufacturer: Example',
+        '\tPart Number: M-16',
+        'Memory Device',
+        '\tSize: 8 GB',
+        '\tModel: M-8',
+        ''
+      ].join('\n')
     });
 
     const result = await analyzeStructuredExtract(root, noRules);
 
-    expect(result.memory).toEqual([{ size: '16 GB', manufacturer: 'Example', model: 'M-16' }]);
+    expect(result.memory).toEqual([
+      { size: '16 GB', manufacturer: 'Example', model: 'M-16' },
+      { size: '16 GB', manufacturer: 'Example', model: 'M-16' },
+      { size: '8 GB', manufacturer: '', model: 'M-8' }
+    ]);
     expect(result.networks).toEqual([{
       name: 'eth0',
       mac: 'AA:BB:CC:DD:EE:FF',
