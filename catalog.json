@@ -118,6 +118,18 @@
             "keyId": "thelinyue-apps-ed25519-2026-v2",
             "signature": "UPcCcfEqtQfO1NuQ3iRncCR5KXu0Gpk1aOrBCUvJLcM/iBC3+4ioPFoMi9fQRnMD5q7CUoX4vfx3WWGwDQB9Cg=="
           }
+        },
+        {
+          "version": "2.0.0",
+          "hostApiVersion": "1.0",
+          "minWorkbenchVersion": "0.1.8",
+          "url": "https://github.com/thelinyue/Workbench-Apps/releases/download/workbench-apps/terminal-v2.0.0.zip",
+          "size": 685889,
+          "sha256": "42d03ad1568bb859f34aaceaec0f2e645e7690e885761bcdf65d00186dd1998b",
+          "signature": {
+            "keyId": "thelinyue-apps-ed25519-2026-v2",
+            "signature": "RgNICyP8SRBMLQWhD2FuA7yNoAm8N9ruTYpLWgpnHLnWk2blwOjPmz6eG4VekM7wNtuXDUjuSb87iLWnqm8bDw=="
+          }
         }
       ]
     }
