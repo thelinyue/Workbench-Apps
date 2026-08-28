@@ -93,6 +93,10 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .terminal-pane .xterm { height: 100%; }
 .terminal-pane .xterm-viewport { scrollbar-color: #445264 transparent; }
 .terminal-empty { height: 100%; display: grid; place-content: center; justify-items: center; gap: 15px; color: #8f9dae; }
+.terminal-context-menu { position: fixed; z-index: 60; width: 152px; padding: 4px; border: 1px solid #3b4a5a; border-radius: var(--radius); background: #18232e; box-shadow: 0 12px 30px rgb(0 0 0 / 38%); }
+.terminal-context-menu button { width: 100%; min-height: 38px; padding: 0 10px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 4px; color: #e7edf5; background: transparent; cursor: pointer; text-align: left; }
+.terminal-context-menu button:hover:not(:disabled), .terminal-context-menu button:focus-visible { background: #273747; }
+.terminal-context-menu button:disabled { color: #778594; cursor: not-allowed; opacity: 1; }
 
 .file-panel { grid-column: 5; min-width: 0; min-height: 0; display: grid; grid-template-rows: 58px auto 46px 45px 34px minmax(0, 1fr); background: var(--surface); }
 .panel-heading { grid-row: 1; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--border); }

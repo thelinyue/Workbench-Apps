@@ -5,11 +5,42 @@ import { ConnectionDialog } from '../renderer/connection-dialog';
 import { DeviceSidebar } from '../renderer/device-sidebar';
 import { FilePanel } from '../renderer/file-panel';
 import { SplitPaneHandle } from '../renderer/split-pane-handle';
-import { TerminalWorkspace } from '../renderer/terminal-workspace';
+import { TerminalContextMenu, TerminalWorkspace } from '../renderer/terminal-workspace';
 import * as terminalWorkspaceModule from '../renderer/terminal-workspace';
 import { TransferTaskPopover } from '../renderer/transfer-task-popover';
 
 describe('SSH 工作区组件', () => {
+  it('按 Windows Terminal 语义区分复制、粘贴和远端中断快捷键', () => {
+    const resolveShortcut = (terminalWorkspaceModule as unknown as {
+      resolveTerminalClipboardShortcut?: (event: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }, hasSelection: boolean) => 'copy' | 'paste' | undefined;
+    }).resolveTerminalClipboardShortcut;
+    const key = (value: string, shiftKey = false) => ({ key: value, ctrlKey: true, shiftKey, altKey: false, metaKey: false });
+
+    expect(resolveShortcut).toBeTypeOf('function');
+    expect(resolveShortcut?.(key('c'), true)).toBe('copy');
+    expect(resolveShortcut?.(key('c'), false)).toBeUndefined();
+    expect(resolveShortcut?.(key('c', true), false)).toBe('copy');
+    expect(resolveShortcut?.(key('v'), false)).toBe('paste');
+    expect(resolveShortcut?.(key('v', true), false)).toBe('paste');
+    expect(resolveShortcut?.({ ...key('v'), altKey: true }, false)).toBeUndefined();
+  });
+
+  it('右键菜单呈现复制粘贴状态并限制在可视区域内', () => {
+    const clampPosition = (terminalWorkspaceModule as unknown as {
+      clampTerminalContextMenuPosition?: (x: number, y: number, viewportWidth: number, viewportHeight: number) => { x: number; y: number };
+    }).clampTerminalContextMenuPosition;
+    const markup = renderToStaticMarkup(createElement(TerminalContextMenu, {
+      position: { x: 100, y: 120 }, canCopy: false, canPaste: true,
+      onCopy: () => undefined, onPaste: () => undefined
+    }));
+
+    expect(markup).toContain('role="menu"');
+    expect(markup).toContain('role="menuitem" disabled=""');
+    expect(markup).toContain('>复制<');
+    expect(markup).toContain('>粘贴<');
+    expect(clampPosition?.(790, 590, 800, 600)).toEqual({ x: 648, y: 516 });
+  });
+
   it('仅在焦点转移到 iframe 内其他控件时释放终端 Tab 捕获', () => {
     const shouldReleaseTerminalTabCapture = (terminalWorkspaceModule as unknown as {
       shouldReleaseTerminalTabCapture?: (relatedTarget: EventTarget | null) => boolean;
@@ -77,7 +108,8 @@ describe('SSH 工作区组件', () => {
       onActive: () => undefined,
       onDisconnect: () => undefined,
       onReconnect: () => undefined,
-      onNew: () => undefined
+      onNew: () => undefined,
+      onError: () => undefined
     }));
 
     expect(sidebarMarkup).not.toContain('>新建连接<');

@@ -12,13 +12,13 @@ describe('SSH 终端应用 manifest', () => {
       schemaVersion: 1,
       id: 'terminal',
       version: '2.0.0',
-      minWorkbenchVersion: '0.1.6',
+      minWorkbenchVersion: '0.1.8',
       window: {
         defaultSize: { width: 1440, height: 900 },
         minSize: { width: 960, height: 640 }
       },
       runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' },
-      capabilities: ['ssh.credentials', 'file.open', 'file.save']
+      capabilities: ['ssh.credentials', 'file.open', 'file.save', 'clipboard.read', 'clipboard.write']
     });
   });
 });

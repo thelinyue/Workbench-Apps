@@ -18,7 +18,7 @@ describe('SSH 终端应用发布配置', () => {
       schemaVersion: 1,
       id: 'terminal',
       runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' },
-      capabilities: ['ssh.credentials', 'file.open', 'file.save']
+      capabilities: ['ssh.credentials', 'file.open', 'file.save', 'clipboard.read', 'clipboard.write']
     });
     expect(buildSource).toContain('getReleaseAssetName(manifest.id,manifest.version)');
     expect(buildSource).toContain('getReleaseUrl(manifest.id,manifest.version)');

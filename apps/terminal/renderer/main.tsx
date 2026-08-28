@@ -228,7 +228,7 @@ function App() {
     <section ref={workspaceRef} className={`workspace-body${paneVisibility.leftHidden ? ' left-pane-hidden' : ''}${paneVisibility.rightHidden ? ' right-pane-hidden' : ''}`} style={splitStyle}>
       {!paneVisibility.leftHidden && <DeviceSidebar collapsed={false} connections={connections} onNew={openNewDialog} onConnect={(profile) => void connectDevice(profile)} onEdit={openEditDialog} onDelete={(profile) => void deleteProfile(profile).catch(showError)} onClearRecent={() => void host.invoke('connections.clearRecent').then(refreshConnections).catch(showError)} />}
       {!paneVisibility.leftHidden && <SplitPaneHandle side="left" value={splitLayout.leftWidth} minimum={LEFT_PANE_MIN} maximum={LEFT_PANE_MAX} onResize={(width) => resizeSide('left', width)} />}
-      <TerminalWorkspace host={host} sessions={sessions} activeId={activeId} onActive={setActiveId} onDisconnect={(id) => void disconnect(id)} onReconnect={(id) => void host.invoke<{ id: string }>('sessions.reconnect', { id }).then(() => setActiveId(id)).catch(showError)} onNew={openNewDialog} />
+      <TerminalWorkspace host={host} sessions={sessions} activeId={activeId} onActive={setActiveId} onDisconnect={(id) => void disconnect(id)} onReconnect={(id) => void host.invoke<{ id: string }>('sessions.reconnect', { id }).then(() => setActiveId(id)).catch(showError)} onNew={openNewDialog} onError={showError} />
       {!paneVisibility.rightHidden && <SplitPaneHandle side="right" value={splitLayout.rightWidth} minimum={RIGHT_PANE_MIN} maximum={RIGHT_PANE_MAX} onResize={(width) => resizeSide('right', width)} />}
       {!paneVisibility.rightHidden && <FilePanel
         host={host}

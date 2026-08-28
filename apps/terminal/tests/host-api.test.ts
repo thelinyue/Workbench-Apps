@@ -45,4 +45,33 @@ describe('Terminal Host Client', () => {
     }, '*');
     expect(listener).toHaveBeenCalledWith({ key: 'Tab' });
   });
+
+  it('通过受控 Host RPC 读写系统纯文本剪贴板', async () => {
+    let onMessage: ((event: { source: unknown; data: unknown }) => void) | undefined;
+    const parent = { postMessage: vi.fn() };
+    let sequence = 0;
+    vi.stubGlobal('window', {
+      parent,
+      addEventListener: (_name: string, listener: typeof onMessage) => { onMessage = listener; }
+    });
+    vi.stubGlobal('crypto', { randomUUID: () => `clipboard-${++sequence}` });
+    const client = new AppHostClient() as AppHostClient & {
+      readClipboardText(): Promise<string>;
+      writeClipboardText(text: string): Promise<void>;
+    };
+
+    const read = client.readClipboardText();
+    expect(parent.postMessage).toHaveBeenLastCalledWith({
+      type: 'workbench-app-rpc', appId: 'terminal', requestId: 'clipboard-1', method: 'host.clipboard.readText', payload: undefined
+    }, '*');
+    onMessage?.({ source: parent, data: { type: 'workbench-app-rpc-response', requestId: 'clipboard-1', ok: true, result: '系统文本' } });
+    await expect(read).resolves.toBe('系统文本');
+
+    const write = client.writeClipboardText('终端选区');
+    expect(parent.postMessage).toHaveBeenLastCalledWith({
+      type: 'workbench-app-rpc', appId: 'terminal', requestId: 'clipboard-2', method: 'host.clipboard.writeText', payload: { text: '终端选区' }
+    }, '*');
+    onMessage?.({ source: parent, data: { type: 'workbench-app-rpc-response', requestId: 'clipboard-2', ok: true } });
+    await expect(write).resolves.toBeUndefined();
+  });
 });
