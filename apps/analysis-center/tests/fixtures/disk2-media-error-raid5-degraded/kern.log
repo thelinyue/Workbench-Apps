@@ -1,0 +1,12 @@
+2025-11-16T00:20:46.100000+08:00 host kernel: ata2.00: failed command: WRITE FPDMA QUEUED
+2025-11-16T00:20:46.110000+08:00 host kernel: ata2: SATA link down (SStatus 0 SControl 300)
+2025-11-16T00:20:46.120000+08:00 host kernel: I/O error, dev sda, sector 32000008
+2025-11-16T00:20:46.130000+08:00 host kernel: md/raid:md1: Disk failure on sda2, disabling device.
+2026-08-18T09:43:17.100000+08:00 host kernel: ata2.00: failed command: READ FPDMA QUEUED
+2026-08-18T09:43:17.110000+08:00 host kernel: ata2.00: error: { UNC }
+2026-08-18T09:43:17.120000+08:00 host kernel: sd 1:0:0:0: [sdc] Add. Sense: Unrecovered read error
+2026-08-18T09:43:17.130000+08:00 host kernel: critical medium error, dev sdc, sector 32000008
+2026-08-19T12:28:41.100000+08:00 host kernel: ata2.00: failed command: READ FPDMA QUEUED
+2026-08-19T12:28:41.110000+08:00 host kernel: ata2.00: error: { UNC }
+2026-08-19T12:28:41.120000+08:00 host kernel: sd 1:0:0:0: [sda] Add. Sense: Unrecovered read error
+2026-08-19T12:28:41.130000+08:00 host kernel: critical medium error, dev sda, sector 32000008

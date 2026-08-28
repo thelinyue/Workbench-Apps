@@ -10,7 +10,7 @@ export interface NormalizedEvent { id: string; ruleId: string; type: string; res
 export interface Finding { id: string; type: string; category: string; severity: Severity; confidence: Confidence; title: string; summary: string; affectedResources: string[]; evidenceIds: string[]; firstSeen?: string; lastSeen?: string; occurrenceCount: number; }
 export interface Recommendation { id: string; priority: number; type: 'inspection' | 'verification' | 'repair'; title: string; reason: string; risk: 'safe' | 'confirmation-required' | 'high-risk'; }
 export interface SmartRiskAttribute { id: number; name: string; raw: number; }
-export interface DeviceAssessment { resource: string; label?: string; model?: string; serial?: string; slot?: string; usedFor?: string; smartRiskAttributes: SmartRiskAttribute[]; ioErrorCount: number; }
+export interface DeviceAssessment { resource: string; label?: string; model?: string; serial?: string; slot?: string; usedFor?: string; smartRiskAttributes: SmartRiskAttribute[]; ioErrorCount: number; mediaErrorCount?: number; }
 export interface Diagnosis { id: string; category: string; severity: Severity; confidence: Confidence; title: string; summary: string; primaryResource?: string; affectedResources: string[]; affectedDeviceResources?: string[]; findingIds: string[]; recommendationIds: string[]; userConclusion?: string; engineerConclusion?: string; correlationWindowMs?: number; }
 export interface AnalysisResult { schemaVersion: 1; id: string; status: 'completed' | 'partial'; summary: { criticalCount: number; warningCount: number; infoCount: number; primaryDiagnosisId?: string; complete: boolean }; diagnoses: Diagnosis[]; findings: Finding[]; evidence: Evidence[]; deviceAssessments: DeviceAssessment[]; recommendations: Recommendation[]; metadata: { source: string; startTime: string; completeTime: string; duration: number; processedFiles: number; processedLines: number; processedEvents: number; analyzerVersion: string; rulePackVersion: string; missingData: string[] }; }
 
@@ -23,7 +23,7 @@ type V1Source = 'kernel' | 'sysinfo' | 'mdstat' | 'ugvolume';
 type CompiledEventRule = (typeof rulePack.eventRules)[number] & { pattern: RegExp };
 const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume'] as V1Source[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1Source, CompiledEventRule[]>;
 // 内核来源的大多数行是无异常心跳；该集合覆盖当前所有 kernel 规则的触发词，预筛选命中后仍由原规则决定诊断结果。
-const kernelEventCandidate = /\b(?:error|timeout|timed out|reset controller|device not ready|hard resetting|failed|link(?: is)? down|not recognized|not found|medium|uncorrectable|panic|out of memory|oom-kill|killed process|watchdog|uncleanly|orphan inode|recovery complete|corrupt\w*|read-only)\b/i;
+const kernelEventCandidate = /\b(?:error|timeout|timed out|reset controller|device not ready|hard resetting|failed|failure|link(?: is)? down|not recognized|not found|medium|uncorrectable|panic|out of memory|oom-kill|killed process|watchdog|uncleanly|orphan inode|recovery complete|corrupt\w*|read-only)\b/i;
 
 export interface V1Progress { processedFiles: number; totalFiles: number; progress: number; }
 
@@ -61,10 +61,12 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
     }
     else {
       const mdstatContext: { currentArray?: string } = {};
+      const kernelContext: { recentAtaSlot?: string; recentAtaLine?: number } = {};
       let lineNumber = 0;
       forEachLine(content, (line, endOffset) => {
         lineNumber += 1;
         processedLines += 1;
+        if (source === 'kernel') updateKernelContext(line, lineNumber, kernelContext);
         if (source === 'kernel' && !kernelEventCandidate.test(line)) {
           if (lineNumber % 1024 === 0) reportProgress(sourceIndex, endOffset, content.length);
           return;
@@ -77,7 +79,12 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
           const device = match.groups?.device;
           const slot = match.groups?.slot;
           const resource = slot?.toLowerCase() ?? (device ? `/dev/${device.replace(/\d+$/, '')}` : source === 'ugvolume' && rule.type === 'filesystem.error' ? poolFromMountLine(line) : undefined);
-          add(rule.id, rule.type, sourceFile, line, lineNumber, resource);
+          const attributes = Object.fromEntries(Object.entries(match.groups ?? {}).filter(([name, value]) => name !== 'device' && name !== 'slot' && Boolean(value))) as Record<string, string>;
+          const recentSlot = source === 'kernel' && kernelContext.recentAtaLine !== undefined && lineNumber - kernelContext.recentAtaLine <= 12
+            ? kernelContext.recentAtaSlot
+            : undefined;
+          if (slot || (recentSlot && ['storage.media_error', 'storage.io_error', 'raid.member_failed'].includes(rule.type))) attributes.slot = (slot ?? recentSlot)!;
+          add(rule.id, rule.type, sourceFile, line, lineNumber, resource, attributes);
           emittedTypes.add(rule.type);
         }
         if (source === 'mdstat') parseMdstatLine(line, sourceFile, lineNumber, add, deviceArrays, raidAssessments, mdstatContext);
@@ -86,6 +93,12 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
       });
       reportProgress(sourceIndex + 1, 0, 0, true);
     }
+  }
+  canonicalizeDeviceEvents(events, evidence, deviceIdentities);
+  for (const event of events.filter((item) => item.type === 'raid.member_failed')) {
+    const array = typeof event.attributes.array === 'string' ? event.attributes.array : undefined;
+    if (!array || !event.resource?.startsWith('/dev/')) continue;
+    deviceArrays.set(event.resource, [...new Set([...(deviceArrays.get(event.resource) ?? []), array])]);
   }
   for (const event of events.filter((item) => item.type === 'raid.degraded')) {
     const linked = topology.get(event.resource ?? '') ?? [];
@@ -102,8 +115,38 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
 }
 
 function forEachLine(content: string, callback: (line: string, endOffset: number) => void): void { let start = 0; for (let index = 0; index <= content.length; index += 1) { if (index !== content.length && content.charCodeAt(index) !== 10) continue; const end = index > start && content.charCodeAt(index - 1) === 13 ? index - 1 : index; callback(content.slice(start, end), index); start = index + 1; } }
-function classify(file: string): V1Source | undefined { const name = file.replaceAll('\\', '/').toLowerCase(); if (name.endsWith('sysinfo.json')) return 'sysinfo'; if (name.endsWith('mdstat.log')) return 'mdstat'; if (name.endsWith('ugvolume.log')) return 'ugvolume'; return /(?:^|\/)(?:kern(?:\.log(?:\.\d+)?)?|syslog(?:\.\d+)?|journal[^/]*|dmesg[^/]*)$/.test(name) ? 'kernel' : undefined; }
+function classify(file: string): V1Source | undefined { const name = file.replaceAll('\\', '/').toLowerCase(); if (name.endsWith('sysinfo.json')) return 'sysinfo'; if (name.endsWith('mdstat.log')) return 'mdstat'; if (name.endsWith('ugvolume.log')) return 'ugvolume'; return /(?:^|\/)(?:kern(?:\.log(?:\.\d+)?)?(?:\.gz)?|syslog(?:\.\d+)?(?:\.gz)?|journal[^/]*|dmesg[^/]*)$/.test(name) ? 'kernel' : undefined; }
 function parseTimestamp(line: string): { timestamp?: string; precision: TimestampPrecision; confidence: Confidence } { const match = line.match(/\b(20\d\d-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?)\b/); return match ? { timestamp: new Date(match[1].replace(' ', 'T')).toISOString(), precision: 'exact', confidence: 'confirmed' } : { precision: 'unknown', confidence: 'low' }; }
+/**
+ * ATA 与 SCSI 错误经常分布在连续多行中，单行里的 /dev/sdX 又可能随重启变化。
+ * 这里只在同一文件、最多 12 行的错误块内继承最近 ATA 盘位，避免跨日志或长距离猜测设备身份。
+ */
+function updateKernelContext(line: string, lineNumber: number, context: { recentAtaSlot?: string; recentAtaLine?: number }): void {
+  const match = line.match(/\b(ata\d+)(?:\.\d+)?:/i);
+  if (match && /(?:failed command|\bEmask\b|\berror:|\bUNC\b)/i.test(line)) {
+    context.recentAtaSlot = match[1].toLowerCase();
+    context.recentAtaLine = lineNumber;
+  } else if (context.recentAtaLine !== undefined && lineNumber - context.recentAtaLine > 12) {
+    delete context.recentAtaSlot;
+    delete context.recentAtaLine;
+  }
+}
+
+/** 使用 sysinfo 的当前盘位身份收敛历史设备名，同时在 attributes 中保留原始设备名用于工程取证。 */
+function canonicalizeDeviceEvents(events: NormalizedEvent[], evidence: Evidence[], deviceIdentities: Map<string, DeviceIdentity>): void {
+  const resourceBySlot = new Map([...deviceIdentities.values()].flatMap((identity) => identity.slot ? [[identity.slot.toLowerCase(), identity.resource] as const] : []));
+  const evidenceById = new Map(evidence.map((item) => [item.id, item]));
+  for (const event of events) {
+    if (!['storage.media_error', 'storage.io_error', 'raid.member_failed'].includes(event.type)) continue;
+    const slot = typeof event.attributes.slot === 'string' ? event.attributes.slot.toLowerCase() : undefined;
+    const canonicalResource = slot ? resourceBySlot.get(slot) : undefined;
+    if (!canonicalResource) continue;
+    if (event.resource && event.resource !== canonicalResource && event.resource !== slot) event.attributes.observedResource = event.resource;
+    event.resource = canonicalResource;
+    const item = evidenceById.get(event.evidenceId);
+    if (item) item.resource = canonicalResource;
+  }
+}
 /**
  * sysinfo 的 SMART 报告与 disk_info 是同级字段，递归时必须显式继承 disk_info.dev_name。
  * 标准属性 05、197、198（名称分别为 Reallocated_Sector_Ct、Current_Pending_Sector、Offline_Uncorrectable）的 raw 非零均是设备已经出现介质风险的直接快照证据。
@@ -156,7 +199,12 @@ function buildDeviceAssessments(deviceIdentities: Map<string, DeviceIdentity>, e
   return [...resources].sort().map((resource) => {
     const identity = deviceIdentities.get(resource) ?? { resource };
     const smartRiskAttributes = events.filter((event) => event.type === 'storage.smart_risk' && event.resource === resource).map((event) => ({ id: Number(event.attributes.attributeId) || smartAttributeId(String(event.attributes.attribute)), name: String(event.attributes.attribute), raw: Number(event.attributes.raw) })).filter((attribute) => attribute.raw > 0);
-    return { ...identity, smartRiskAttributes, ioErrorCount: events.filter((event) => event.type === 'storage.io_error' && event.resource === resource).length };
+    return {
+      ...identity,
+      smartRiskAttributes,
+      ioErrorCount: events.filter((event) => event.type === 'storage.io_error' && event.resource === resource).length,
+      mediaErrorCount: events.filter((event) => event.type === 'storage.media_error' && event.resource === resource).length
+    };
   });
 }
 /** 解析 mdstat 的多行阵列块，成员计数只来自同一块中的 [期望/在线] 状态。 */
@@ -185,8 +233,8 @@ function parseMdstatLine(line: string, file: string, lineNumber: number, add: (r
 }
 function parseTopology(line: string, topology: Map<string, string[]>): void { const match = line.match(/pool\[([^\]]+)\].*\/dev\/(md\d+)/i); if (match) topology.set(match[2], [...new Set([...(topology.get(match[2]) ?? []), match[1]])]); const mount = line.match(/pool(\d+)-[^,\s]+.*mntPath:?(\/volume\d+)/i); if (mount) { const pool = `pool${mount[1]}`; topology.set(pool, [...new Set([...(topology.get(pool) ?? []), mount[2]])]); } }
 function poolFromMountLine(line: string): string | undefined { const match = line.match(/pool(\d+)-/i); return match ? `pool${match[1]}` : undefined; }
-function aggregateFindings(events: NormalizedEvent[], evidence: Evidence[], topology: Map<string, string[]>): Finding[] { const groups = new Map<string, NormalizedEvent[]>(); for (const event of events) { const key = `${event.type}:${event.resource ?? 'system'}`; groups.set(key, [...(groups.get(key) ?? []), event]); } return [...groups.entries()].map(([key, grouped]) => { const event = grouped[0]; const resource = event.resource; const extra = resource ? topology.get(resource) ?? [] : []; const title = titleFor(event.type, resource); return { id: key, type: event.type, category: event.type.split('.')[0], severity: severityFor(event.type), confidence: event.type.startsWith('raid.') ? 'confirmed' : event.type === 'storage.smart_risk' ? 'high' : 'medium', title, summary: `${title}，共 ${grouped.length} 次。`, affectedResources: [...new Set([...(resource ? [resource] : []), ...extra])], evidenceIds: grouped.map((item) => item.evidenceId), firstSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort()[0], lastSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort().at(-1), occurrenceCount: grouped.length }; }); }
-function titleFor(type: string, resource?: string): string { const names: Record<string, string> = { 'storage.io_error': '检测到块设备 I/O 错误', 'storage.smart_risk': '检测到 SMART 介质风险指标', 'storage.device_count_mismatch': '检测到 SATA 槽位与块设备数量不一致', 'raid.member_failed': 'RAID 成员已失败', 'raid.degraded': 'RAID 阵列已降级', 'filesystem.error': '检测到文件系统错误', 'system.unclean_shutdown': '检测到异常关机线索', 'system.kernel_panic': '检测到 Kernel Panic', 'system.oom': '检测到内存耗尽', 'system.oom_killer': '检测到 OOM Killer', 'system.watchdog': '检测到 Watchdog 锁死' }; return `${resource ? `${resource} ` : ''}${names[type] ?? type}`; }
+function aggregateFindings(events: NormalizedEvent[], evidence: Evidence[], topology: Map<string, string[]>): Finding[] { const groups = new Map<string, NormalizedEvent[]>(); for (const event of events) { const key = `${event.type}:${event.resource ?? 'system'}`; groups.set(key, [...(groups.get(key) ?? []), event]); } return [...groups.entries()].map(([key, grouped]) => { const event = grouped[0]; const resource = event.resource; const extra = resource ? topology.get(resource) ?? [] : []; const title = titleFor(event.type, resource); const summary = event.type === 'storage.media_error' ? `${title}，共 ${grouped.length} 条日志证据。` : `${title}，共 ${grouped.length} 次。`; return { id: key, type: event.type, category: event.type.split('.')[0], severity: severityFor(event.type), confidence: event.type.startsWith('raid.') || event.type === 'storage.media_error' ? 'confirmed' : event.type === 'storage.smart_risk' ? 'high' : 'medium', title, summary, affectedResources: [...new Set([...(resource ? [resource] : []), ...extra])], evidenceIds: grouped.map((item) => item.evidenceId), firstSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort()[0], lastSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort().at(-1), occurrenceCount: grouped.length }; }); }
+function titleFor(type: string, resource?: string): string { const names: Record<string, string> = { 'storage.io_error': '检测到块设备 I/O 错误', 'storage.media_error': '检测到不可恢复介质错误', 'storage.smart_risk': '检测到 SMART 介质风险指标', 'storage.device_count_mismatch': '检测到 SATA 槽位与块设备数量不一致', 'raid.member_failed': 'RAID 成员已失败', 'raid.degraded': 'RAID 阵列已降级', 'filesystem.error': '检测到文件系统错误', 'system.unclean_shutdown': '检测到异常关机线索', 'system.kernel_panic': '检测到 Kernel Panic', 'system.oom': '检测到内存耗尽', 'system.oom_killer': '检测到 OOM Killer', 'system.watchdog': '检测到 Watchdog 锁死' }; return `${resource ? `${resource} ` : ''}${names[type] ?? type}`; }
 function severityFor(type: string): Severity { return type.startsWith('raid.') || type === 'system.kernel_panic' || type === 'system.watchdog' ? 'critical' : type.startsWith('storage.') || type.startsWith('filesystem.') || type.startsWith('system.') ? 'warning' : 'info'; }
 function localizeDeviceLabel(label: string | undefined, resource: string): string { if (!label) return resource; const m2 = label.match(/^M\.2\s+Hard Drive\s+(\d+)$/i); if (m2) return `M.2 硬盘 ${m2[1]}`; const disk = label.match(/^Hard Drive\s+(\d+)$/i); return disk ? `硬盘 ${disk[1]}` : label; }
 function localizeUsage(usage: string | undefined): string { return usage?.replace(/^Storage Pool\s+(\d+)$/i, '存储池 $1') ?? '日志未提供'; }
@@ -234,7 +282,8 @@ function buildEngineerConclusion(devices: DeviceAssessment[], arrays: string[] =
   const deviceFacts = devices.map((device) => {
     const smart = device.smartRiskAttributes.length ? device.smartRiskAttributes.map((attribute) => `SMART ${String(attribute.id).padStart(2, '0')} 原始值 ${attribute.raw}`).join('、') : '未记录 SMART 风险属性';
     const io = device.ioErrorCount > 0 ? `记录到 I/O 读写错误 ${device.ioErrorCount} 次` : '未记录 I/O 读写错误';
-    return `${localizeDeviceLabel(device.label, device.resource)}：型号 ${device.model ?? '日志未提供'}，序列号 ${device.serial ?? '日志未提供'}，槽位 ${device.slot ?? '日志未提供'}，设备名 ${device.resource}，用途 ${localizeUsage(device.usedFor)}；${smart}；${io}`;
+    const media = (device.mediaErrorCount ?? 0) > 0 ? `记录到不可恢复介质错误证据 ${device.mediaErrorCount} 条` : '未记录不可恢复介质错误';
+    return `${localizeDeviceLabel(device.label, device.resource)}：型号 ${device.model ?? '日志未提供'}，序列号 ${device.serial ?? '日志未提供'}，槽位 ${device.slot ?? '日志未提供'}，设备名 ${device.resource}，用途 ${localizeUsage(device.usedFor)}；${smart}；${io}；${media}`;
   });
   const topologyFacts = [arrays.length ? `关联 RAID ${arrays.join('、')}` : '', pools.length ? `关联存储池 ${pools.join('、')}` : ''].filter(Boolean).join('；');
   return `${deviceFacts.join('。')}${topologyFacts ? `。${topologyFacts}` : ''}。以上为日志记录的设备与事件事实，未据此推断未经证实的因果关系。`;
@@ -250,6 +299,13 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
   const resources = new Set(findings.flatMap((finding) => finding.affectedResources.filter((resource) => resource.startsWith('/dev/'))));
   const smartDevices = [...resources].filter((device) => findings.some((finding) => finding.type === 'storage.smart_risk' && finding.affectedResources.includes(device)));
   const userConclusion = (devices: DeviceAssessment[]) => buildUserConclusion(devices, deviceArrays, raidAssessments);
+  const arraysForDevice = (device: string): string[] => {
+    const slotNumber = deviceByResource.get(device)?.slot?.match(/^ata(\d+)$/i)?.[1];
+    const missingMemberArrays = slotNumber
+      ? [...raidAssessments.values()].filter((raid) => raid.degraded && raid.missingMemberIndexes?.includes(Number(slotNumber) - 1)).map((raid) => raid.resource)
+      : [];
+    return [...new Set([...(deviceArrays.get(device) ?? []), ...missingMemberArrays])];
+  };
   const ensureSmartRecommendation = (device: string): string => {
     const id = `recommendation.smart:${device}`;
     if (!recommendations.some((item) => item.id === id)) recommendations.push({ id, priority: 1, type: 'inspection', title: `检查 ${device} SMART`, reason: '确认磁盘介质错误及健康状态。', risk: 'safe' });
@@ -273,9 +329,10 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
   for (const device of resources) {
     const related = findings.filter((finding) => finding.affectedResources.includes(device));
     const hasIo = related.some((finding) => finding.type === 'storage.io_error');
+    const hasMedia = related.some((finding) => finding.type === 'storage.media_error');
     const hasSmart = related.some((finding) => finding.type === 'storage.smart_risk');
     const failed = related.some((finding) => finding.type === 'raid.member_failed');
-    const arrays = deviceArrays.get(device) ?? [];
+    const arrays = arraysForDevice(device);
     const pools = arrays.flatMap((array) => topology.get(array) ?? []);
     const filesystemImpacts = findings.filter((finding) => finding.type === 'filesystem.error' && finding.affectedResources.some((resource) => pools.includes(resource)));
     const recommendationIds = hasSmart ? [ensureSmartRecommendation(device)] : [];
@@ -286,6 +343,31 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
     }
 
     const assessment = deviceByResource.get(device) ?? { resource: device, smartRiskAttributes: [], ioErrorCount: 0 };
+    if (hasMedia) {
+      const deviceName = localizeDeviceLabel(assessment.label, device);
+      const degradedRaid = arrays.map((array) => raidAssessments.get(array)).find((raid) => raid?.degraded);
+      const raidLevel = degradedRaid?.level?.match(/^raid(\d+)$/i)?.[1];
+      const raidName = raidLevel ? `RAID ${raidLevel}` : 'RAID';
+      const repeated = (assessment.mediaErrorCount ?? 0) > 1 ? '重复的' : '';
+      const removed = failed && Boolean(degradedRaid);
+      const detail = removed
+        ? `${deviceName} 存在${repeated}不可恢复介质读取错误，已被 ${raidName} 移除，${degradedRaid!.resource} 当前处于降级状态。`
+        : degradedRaid
+          ? `${deviceName} 存在${repeated}不可恢复介质读取错误，${degradedRaid.resource} 当前处于降级状态。`
+          : `${deviceName} 存在${repeated}不可恢复介质读取错误。`;
+      const mediaFindingIds = related.filter((finding) => finding.type === 'storage.media_error' || finding.type === 'raid.member_failed').map((finding) => finding.id);
+      const raidFindingIds = findings.filter((finding) => finding.type === 'raid.degraded' && arrays.some((array) => finding.affectedResources.includes(array))).map((finding) => finding.id);
+      diagnoses.unshift({
+        id: 'storage.device.media_failure', category: 'storage', severity: 'critical', confidence: 'confirmed',
+        title: `${deviceName} 存在介质故障${degradedRaid ? '且 RAID 已降级' : ''}`, summary: detail,
+        primaryResource: device,
+        affectedResources: [...new Set([device, ...(assessment.slot ? [assessment.slot] : []), ...arrays])],
+        affectedDeviceResources: [device], findingIds: [...mediaFindingIds, ...raidFindingIds], recommendationIds,
+        userConclusion: `您好，经分析诊断日志，${detail.slice(0, -1)}，建议更换${deviceName}。`,
+        engineerConclusion: buildEngineerConclusion([assessment], arrays, pools)
+      });
+      continue;
+    }
     if (hasSmart && !hasIo && !failed) {
       diagnoses.push({ id: 'storage.device.smart_risk', category: 'storage', severity: 'warning', confidence: 'high', title: `${device} 存在 SMART 介质风险`, summary: `${device} 的 SMART 属性 05、197 或 198 存在非零原始值，已出现介质风险；需尽快核验并保护数据。`, primaryResource: device, affectedResources: [device, ...arrays, ...pools], affectedDeviceResources: [device], findingIds: related.filter((finding) => finding.type === 'storage.smart_risk').map((finding) => finding.id), recommendationIds, userConclusion: userConclusion([assessment]), engineerConclusion: buildEngineerConclusion([assessment], arrays, pools) });
       continue;

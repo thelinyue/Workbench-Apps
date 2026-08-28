@@ -245,6 +245,36 @@ describe('V1 统一诊断分析', () => {
     expect(result.diagnoses[0].userConclusion).not.toContain('硬盘 3');
   });
 
+  it('将跨启动设备名变化的介质错误归并到硬盘 2，并关联已移除成员与 RAID5 降级', async () => {
+    const fixture = new URL('./fixtures/disk2-media-error-raid5-degraded/', import.meta.url);
+    const names = ['kern.log', 'mdstat.log', 'sysinfo.json'];
+    const files = Object.fromEntries(await Promise.all(names.map(async (name) => [name, await readFile(new URL(name, fixture), 'utf8')])));
+    const result = analyzeV1Sources({ sourceName: 'diag_EC752JJ222503616_2608281952.tgz', files });
+
+    expect(result.diagnoses[0]).toEqual(expect.objectContaining({
+      id: 'storage.device.media_failure',
+      title: '硬盘 2 存在介质故障且 RAID 已降级',
+      summary: '硬盘 2 存在重复的不可恢复介质读取错误，已被 RAID 5 移除，md1 当前处于降级状态。',
+      primaryResource: '/dev/sda',
+      affectedResources: expect.arrayContaining(['/dev/sda', 'ata2', 'md1']),
+      affectedDeviceResources: ['/dev/sda'],
+      confidence: 'confirmed',
+      userConclusion: '您好，经分析诊断日志，硬盘 2 存在重复的不可恢复介质读取错误，已被 RAID 5 移除，md1 当前处于降级状态，建议更换硬盘 2。',
+      engineerConclusion: expect.stringContaining('记录到不可恢复介质错误证据 6 条')
+    }));
+    expect(result.diagnoses[0].userConclusion).not.toContain('重新拔插');
+    expect(result.diagnoses[0].userConclusion).not.toContain('备份');
+    expect(result.deviceAssessments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ resource: '/dev/sda', label: 'Hard Drive 2', slot: 'ata2', mediaErrorCount: 6 })
+    ]));
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'storage.media_error:/dev/sda', summary: '/dev/sda 检测到不可恢复介质错误，共 6 条日志证据。' })
+    ]));
+    expect(result.diagnoses).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ primaryResource: '/dev/sdc' })
+    ]));
+  });
+
   it('不把网卡 Link Down 和 smartd 数据库缺项误判为硬盘掉盘', () => {
     const result = analyzeV1Sources({
       sourceName: 'non-storage-link-events.tgz',

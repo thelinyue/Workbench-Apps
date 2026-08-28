@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import * as tar from 'tar';
 import { afterEach, expect, it } from 'vitest';
 import { runV1ArchiveAnalysis } from '../backend/lib/analysis/archive-analysis';
@@ -41,4 +42,27 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
     'aggregate-anomalies',
     'form-conclusion'
   ]);
+});
+
+it('V1 分析会解压并读取 gzip 轮转内核日志', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-gzip-'));
+  directories.push(root);
+  const kernelLog = [
+    '2026-08-19T12:28:41.100000+08:00 host kernel: ata2.00: failed command: READ FPDMA QUEUED',
+    '2026-08-19T12:28:41.110000+08:00 host kernel: ata2.00: error: { UNC }',
+    '2026-08-19T12:28:41.120000+08:00 host kernel: critical medium error, dev sda, sector 32000008'
+  ].join('\n');
+  await writeFile(join(root, 'kern.log.1.gz'), gzipSync(kernelLog));
+  await writeFile(join(root, 'mdstat.log'), 'md1 : active raid5 sdb2[0] sdd2[3] sdc2[2]\n      100 blocks [4/3] [U_UU]');
+  await writeFile(join(root, 'sysinfo.json'), JSON.stringify({ disk: { devices: [{
+    disk_info: { dev_name: '/dev/sda', label: 'Hard Drive 2', slot: 'ata2', used_for: 'Unused' },
+    smart_info: { report: [] }
+  }] } }));
+  const archivePath = join(root, 'fixture.tgz');
+  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['kern.log.1.gz', 'mdstat.log', 'sysinfo.json']);
+
+  const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+
+  expect(result.result.metadata.processedFiles).toBe(3);
+  expect(result.result.diagnoses[0]).toMatchObject({ id: 'storage.device.media_failure', primaryResource: '/dev/sda' });
 });

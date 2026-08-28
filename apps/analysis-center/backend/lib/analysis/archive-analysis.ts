@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import * as tar from 'tar';
 import extractZip from 'extract-zip';
 import { getDiagnosticPackageFormat } from '../domain/diagnostic-package';
@@ -82,7 +83,10 @@ async function collectV1Sources(root: string, onProgress?: (processedFiles: numb
   candidates.sort();
   for (let index = 0; index < candidates.length; index += 1) {
     const path = candidates[index];
-      try { files[path.slice(root.length + 1).replaceAll('\\', '/')] = (await readFile(path)).toString('utf8'); }
+      try {
+        const content = await readFile(path);
+        files[path.slice(root.length + 1).replaceAll('\\', '/')] = path.toLowerCase().endsWith('.gz') ? gunzipSync(content).toString('utf8') : content.toString('utf8');
+      }
       catch (error) { console.error(`读取 V1 分析日志失败，已跳过：${path}；原因：${error instanceof Error ? error.message : String(error)}`); }
     onProgress?.(index + 1, candidates.length);
   }
@@ -90,7 +94,7 @@ async function collectV1Sources(root: string, onProgress?: (processedFiles: numb
 }
 
 function isV1Source(name: string): boolean {
-  return /^(?:sysinfo\.json|mdstat\.log|ugvolume\.log|kern(?:\.log(?:\.\d+)?)?|syslog(?:\.\d+)?|journal.*|dmesg.*)$/i.test(name);
+  return /^(?:sysinfo\.json|mdstat\.log|ugvolume\.log|kern(?:\.log(?:\.\d+)?)?(?:\.gz)?|syslog(?:\.\d+)?(?:\.gz)?|journal.*|dmesg.*)$/i.test(name);
 }
 
 function renderV1Html(result: V1AnalysisResult): string {

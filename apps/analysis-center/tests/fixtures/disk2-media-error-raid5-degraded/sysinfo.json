@@ -1,0 +1,10 @@
+{
+  "disk": {
+    "devices": [
+      { "disk_info": { "label": "Hard Drive 1", "slot": "ata1", "dev_name": "/dev/sdb", "serial": "DISK-1", "used_for": "Storage Pool 1" }, "smart_info": { "report": [] } },
+      { "disk_info": { "label": "Hard Drive 2", "slot": "ata2", "dev_name": "/dev/sda", "model": "WUH722020BLE604", "serial": "6DG490ZY", "used_for": "Unused" }, "smart_info": { "report": [{ "id": 5, "name": "Reallocated_Sector_Ct", "raw": 0 }, { "id": 197, "name": "Current_Pending_Sector", "raw": 0 }, { "id": 198, "name": "Offline_Uncorrectable", "raw": 0 }] } },
+      { "disk_info": { "label": "Hard Drive 3", "slot": "ata3", "dev_name": "/dev/sdc", "serial": "DISK-3", "used_for": "Storage Pool 1" }, "smart_info": { "report": [] } },
+      { "disk_info": { "label": "Hard Drive 4", "slot": "ata4", "dev_name": "/dev/sdd", "serial": "DISK-4", "used_for": "Storage Pool 1" }, "smart_info": { "report": [] } }
+    ]
+  }
+}

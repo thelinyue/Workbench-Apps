@@ -1,0 +1,2 @@
+md1 : active raid5 sdb2[0] sdd2[3] sdc2[2]
+      58547076096 blocks super 1.2 level 5, 64k chunk, algorithm 2 [4/3] [U_UU]
