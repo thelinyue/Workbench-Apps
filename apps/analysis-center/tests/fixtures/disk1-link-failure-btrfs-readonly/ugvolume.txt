@@ -1,0 +1,5 @@
+INFO storage_serv/job/ugvolume/ugvolume.go:178 got 1 sataOnCount and 1 sdCount
+INFO storage_serv/job/ugvolume/ugvolume.go:193 slot[ata1] disk[HDD]sda model[WDC WD60EFRX-68MYMN1] sn[WD-WX11DC449W2E]
+INFO storage_serv/job/ugvolume/private.go:216 start process pool[1]pool1 level raid1 rDevices 1 with 1 volumes
+INFO storage_serv/job/ugvolume/private.go:251 pool[pool1] /dev/md1 assemble by 1 disks
+INFO storage_serv/job/ugvolume/private.go:410 pool[pool1] volume[volume1] mntPath /volume1 has mounted at /volume1

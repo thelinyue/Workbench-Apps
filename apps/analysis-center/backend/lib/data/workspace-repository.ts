@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { DiagnosticPackage, DiagnosticPackageStatus } from '../domain/diagnostic-package';
 import type { AnalysisResult } from '../analysis-v1/pipeline';
@@ -34,9 +34,6 @@ export class WorkspaceRepository {
   }
 
   public close(): void { this.database.close(); }
-
-  /** 解压内容始终位于工作台专属目录，不能使用原始诊断包同级的任意用户目录。 */
-  public getExtractDirectory(packageId: string): string { return join(this.workspaceDirectory, 'extracted', packageId); }
 
   public getMonitorDirectories(): string[] {
     const value = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorDirectories'").get() as { value: string } | undefined;

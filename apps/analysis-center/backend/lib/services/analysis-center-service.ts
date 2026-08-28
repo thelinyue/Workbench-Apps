@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { getDiagnosticPackageFormat, isDiagnosticPackagePath, type DiagnosticPackage } from '../domain/diagnostic-package';
+import { getDiagnosticPackageExtractPath, getDiagnosticPackageFormat, isDiagnosticPackagePath, type DiagnosticPackage } from '../domain/diagnostic-package';
 import { WorkspaceRepository } from '../data/workspace-repository';
 
 /**
@@ -49,19 +49,42 @@ export class AnalysisCenterService {
   }
 
   private registerDiagnosticPackage(sourcePath: string, sourceSizeBytes: number): DiagnosticPackage {
-    const existing = this.repository.listPackages().find((item) => item.sourcePath.toLowerCase() === sourcePath.toLowerCase());
+    const packages = this.repository.listPackages();
+    const existing = packages.find((item) => item.sourcePath.toLowerCase() === sourcePath.toLowerCase());
     if (existing) {
       if (existing.sourceSizeBytes === undefined) this.repository.upsertPackage({ ...existing, sourceSizeBytes });
       return { ...existing, sourceSizeBytes: existing.sourceSizeBytes ?? sourceSizeBytes };
     }
     const displayName = basename(sourcePath);
+    const extractPath = getDiagnosticPackageExtractPath(sourcePath);
+    const sameSourcePackage = packages.find((item) => isSameTgzSource(item.sourcePath, sourcePath));
+    if (sameSourcePackage) {
+      const updated = { ...sameSourcePackage, sourcePath, displayName, sourceSizeBytes };
+      this.repository.upsertPackage(updated);
+      return updated;
+    }
+    // 非 TGZ 临时/最终名不能共享可递归删除的目录，否则任一记录删除都会破坏另一条记录。
+    const sameExtractPackage = packages.find((item) => item.extractPath.toLowerCase() === extractPath.toLowerCase());
+    if (sameExtractPackage) {
+      throw new Error(`另一个诊断包已使用相同解压目录：${sameExtractPackage.displayName}。请重命名当前诊断包后重新导入`);
+    }
     const id = randomUUID();
     const item: DiagnosticPackage = {
-      id, sourcePath, extractPath: this.repository.getExtractDirectory(id), displayName, sourceSizeBytes,
+      id, sourcePath, extractPath, displayName, sourceSizeBytes,
       detectedAt: new Date().toISOString(), status: 'pending', taskIds: [], caseId: randomUUID()
     };
     this.repository.upsertPackage(item);
     this.repository.ensureCase(item.id, item.caseId);
     return item;
+  }
+}
+
+/** `.tgz.temp` 是同一归档下载完成前的名称；改名后必须复用记录，同时保留历史解压路径。 */
+function isSameTgzSource(leftPath: string, rightPath: string): boolean {
+  if (getDiagnosticPackageFormat(leftPath) !== 'tgz' || getDiagnosticPackageFormat(rightPath) !== 'tgz') return false;
+  try {
+    return getDiagnosticPackageExtractPath(leftPath).toLowerCase() === getDiagnosticPackageExtractPath(rightPath).toLowerCase();
+  } catch {
+    return false;
   }
 }

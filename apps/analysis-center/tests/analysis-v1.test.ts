@@ -192,7 +192,7 @@ describe('V1 统一诊断分析', () => {
     })]));
   });
 
-  it('仅在明确掉盘日志出现时提示关机后重新插拔或换槽', () => {
+  it('单独出现未映射到现有硬盘的 SATA link down 时不推断掉盘', () => {
     const unavailable = analyzeV1Sources({
       sourceName: 'device-unavailable.tgz',
       files: { 'kern.log': 'ata1: SATA link down (SStatus 0 SControl 300)' }
@@ -202,10 +202,15 @@ describe('V1 统一诊断分析', () => {
       files: { 'kern.log': 'sd 0:0:0:0: timing out command, dev sda' }
     });
 
-    expect(unavailable.diagnoses).toEqual(expect.arrayContaining([expect.objectContaining({
-      id: 'storage.device.unrecognized',
-      userConclusion: '您好，经分析诊断日志，硬盘 1 当前未被系统识别，可能存在硬盘接触或槽位异常。请关机后重新拔插硬盘 1；如仍未识别，请更换其他硬盘槽位接入对比，以判断是硬盘故障还是槽位异常。'
-    })]));
+    expect(unavailable.diagnoses).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'storage.device.unrecognized' })
+    ]));
+    expect(unavailable.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'storage.sata_link_down', affectedResources: ['ata1'] })
+    ]));
+    expect(unavailable.findings).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'storage.device_unrecognized' })
+    ]));
     expect(timeout.diagnoses).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'storage.device.unrecognized' })]));
   });
 
@@ -273,6 +278,51 @@ describe('V1 统一诊断分析', () => {
     expect(result.diagnoses).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ primaryResource: '/dev/sdc' })
     ]));
+  });
+
+  it('真实 EC752 单盘介质故障不会把其余空槽位误判为掉盘', async () => {
+    const fixture = new URL('./fixtures/disk1-media-failure-empty-slots/', import.meta.url);
+    const sources = [['journal-5days.log', 'journal-5days.txt'], ['mdstat.log', 'mdstat.txt'], ['ugvolume.log', 'ugvolume.txt'], ['sysinfo.json', 'sysinfo.json']] as const;
+    const files = Object.fromEntries(await Promise.all(sources.map(async ([sourceName, fixtureName]) => [sourceName, await readFile(new URL(fixtureName, fixture), 'utf8')])));
+    const result = analyzeV1Sources({ sourceName: 'diag_EC752JJ35250CAD4_2608282019.tgz', files });
+
+    expect(result.diagnoses[0]).toEqual(expect.objectContaining({
+      id: 'storage.device.media_failure',
+      title: '硬盘 1 存在介质故障',
+      primaryResource: '/dev/sda',
+      userConclusion: expect.stringContaining('建议更换硬盘 1')
+    }));
+    expect(result.diagnoses).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'storage.device.unrecognized' })
+    ]));
+    expect(result.findings).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'storage.device_unrecognized' })
+    ]));
+  });
+
+  it('真实 H430 将设备掉线、写入错误与 BTRFS 强制只读关联到硬盘 1 和存储池 1', async () => {
+    const fixture = new URL('./fixtures/disk1-link-failure-btrfs-readonly/', import.meta.url);
+    const sources = [['kern.log', 'kern.txt'], ['mdstat.log', 'mdstat.txt'], ['ugvolume.log', 'ugvolume.txt'], ['sysinfo.json', 'sysinfo.json']] as const;
+    const files = Object.fromEntries(await Promise.all(sources.map(async ([sourceName, fixtureName]) => [sourceName, await readFile(new URL(fixtureName, fixture), 'utf8')])));
+    const result = analyzeV1Sources({ sourceName: 'diag_H43001J6100097FA_2608281705.tgz', files });
+
+    expect(result.diagnoses[0]).toEqual(expect.objectContaining({
+      id: 'storage.device.suspected_failure',
+      title: '硬盘 1 健康异常并发生链路掉线',
+      summary: '硬盘 1 健康信息异常并发生链路掉线，导致存储池 1 写入失败并被强制切换为只读。',
+      primaryResource: '/dev/sda',
+      affectedResources: expect.arrayContaining(['/dev/sda', 'md1', 'pool1', '/volume1']),
+      userConclusion: '您好，经分析诊断日志，硬盘 1 健康信息异常并发生链路掉线，导致存储池 1 写入失败并被强制切换为只读。请关机后重新拔插硬盘 1；如换槽后仍出现相同错误，说明硬盘自身故障，建议更换硬盘 1。'
+    }));
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'storage.device_unavailable:/dev/sda' }),
+      expect.objectContaining({ id: 'filesystem.read_only:pool1' })
+    ]));
+    expect(result.diagnoses).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'storage.device.unrecognized' }),
+      expect.objectContaining({ id: 'raid.array.degraded' })
+    ]));
+    expect(result.diagnoses[0].userConclusion).not.toContain('备份');
   });
 
   it('不把网卡 Link Down 和 smartd 数据库缺项误判为硬盘掉盘', () => {

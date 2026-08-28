@@ -1,0 +1,2 @@
+INFO storage_serv/job/ugvolume/ugvolume.go:178 got 1 sataOnCount and 1 sdCount
+INFO storage_serv/job/ugvolume/ugvolume.go:193 slot[ata1] disk[HDD]sda model[WDC WD30EFRX-68EUZN0] sn[WD-WC3K21EAP7S3]

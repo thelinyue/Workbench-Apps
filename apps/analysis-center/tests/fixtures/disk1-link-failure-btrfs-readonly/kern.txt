@@ -1,0 +1,8 @@
+2026-08-28T00:26:10.545818+08:00 DH4300PLUS-97FA kernel: ata2.00: irq_stat 0x08000000, interface fatal error
+2026-08-28T00:27:10.545752+08:00 DH4300PLUS-97FA kernel: ata2: reset failed, giving up
+2026-08-28T00:27:10.545754+08:00 DH4300PLUS-97FA kernel: ata2.00: disable device
+2026-08-28T00:27:10.545757+08:00 DH4300PLUS-97FA kernel: sd 1:0:0:0: [sda] tag#10 FAILED Result: hostbyte=DID_BAD_TARGET driverbyte=DRIVER_OK cmd_age=0s
+2026-08-28T00:27:10.545760+08:00 DH4300PLUS-97FA kernel: I/O error, dev sda, sector 232363000 op 0x1:(WRITE)
+2026-08-28T00:27:10.713768+08:00 DH4300PLUS-97FA kernel: BTRFS error (device dm-0): bdev /dev/mapper/ug_A96FFE_1773749153_pool1-volume1 errs: wr 9, rd 0, flush 0, corrupt 0, gen 0
+2026-08-28T00:27:10.713769+08:00 DH4300PLUS-97FA kernel: BTRFS: error (device dm-0) in btrfs_commit_transaction:2576: errno=-5 IO failure (Error while writing out transaction)
+2026-08-28T00:27:10.713772+08:00 DH4300PLUS-97FA kernel: BTRFS info (device dm-0: state E): forced readonly

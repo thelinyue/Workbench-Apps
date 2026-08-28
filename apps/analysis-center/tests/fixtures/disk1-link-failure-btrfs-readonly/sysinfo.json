@@ -1,0 +1,24 @@
+{
+  "disk": {
+    "devices": [
+      {
+        "disk_info": {
+          "label": "Hard Drive 1",
+          "slot": "ata1",
+          "dev_name": "/dev/sda",
+          "model": "WDC WD60EFRX-68MYMN1",
+          "serial": "WD-WX11DC449W2E",
+          "used_for": "Storage Pool 1"
+        },
+        "smart_info": {
+          "report": [
+            { "id": 5, "name": "Reallocated_Sector_Ct", "raw": 206 },
+            { "id": 196, "name": "Reallocated_Event_Count", "raw": 9 },
+            { "id": 197, "name": "Current_Pending_Sector", "raw": 0 },
+            { "id": 198, "name": "Offline_Uncorrectable", "raw": 0 }
+          ]
+        }
+      }
+    ]
+  }
+}

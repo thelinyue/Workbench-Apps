@@ -23,6 +23,9 @@ describe('诊断包分析执行', () => {
     const archivePath = join(root, 'device.tgz');
     const extractDirectory = join(root, 'device');
     await mkdir(sourceDirectory);
+    await mkdir(extractDirectory);
+    const existingPath = join(extractDirectory, 'existing-user-file.txt');
+    await writeFile(existingPath, 'keep');
     await writeFile(join(sourceDirectory, 'kern'), 'nvme I/O Error: controller failed <danger> & "quoted"\n', 'utf8');
     await tar.c({ gzip: true, cwd: sourceDirectory, file: archivePath }, ['kern']);
 
@@ -37,6 +40,7 @@ describe('诊断包分析执行', () => {
     await expect(access(join(extractDirectory, 'Report', 'static', 'workbench-report.js'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(access(join(extractDirectory, 'Report', 'structured', 'storage-health.json'))).resolves.toBeUndefined();
     await expect(access(join(extractDirectory, 'Report', 'structured', 'lsblk.html'))).resolves.toBeUndefined();
+    await expect(readFile(existingPath, 'utf8')).resolves.toBe('keep');
     expect(result.analysis.files[0].issues[0].message).toBe('nvmeI/O错误');
     const report = await readFile(result.reportPath, 'utf8');
     expect(report).toContain('class="hero"');

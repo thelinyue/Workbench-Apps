@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatFileSize, getAnalysisStageItems, getNotificationActivation, getPackageTone, getWorkspaceGroups } from '../renderer/workspace-presentation';
+import { formatFileSize, getAnalysisStageItems, getNotificationActivation, getPackageDeletionConfirmation, getPackageTone, getRecentAnalysisPresentation, getWorkspaceGroups } from '../renderer/workspace-presentation';
 
 describe('分析中心工作区呈现', () => {
   it('把成功和失败统一放入最近分析，待分析与活动任务保持独立', () => {
@@ -30,6 +30,37 @@ describe('分析中心工作区呈现', () => {
     expect(getPackageTone('pending')).toBe('default');
   });
 
+  it('正常完成且没有主要诊断时明确显示未发现异常', () => {
+    expect(getRecentAnalysisPresentation({
+      status: 'report-ready',
+      displayName: 'healthy.tgz',
+      result: { diagnoses: [] }
+    })).toEqual({ title: '未发现明确异常', detail: 'healthy.tgz', severity: 'info' });
+  });
+
+  it('有主要诊断时显示诊断标题和严重程度', () => {
+    expect(getRecentAnalysisPresentation({
+      status: 'report-ready',
+      displayName: 'fault.tgz',
+      result: { diagnoses: [{ title: '硬盘 2 掉盘且 RAID 已降级', severity: 'critical' }] }
+    })).toEqual({ title: '硬盘 2 掉盘且 RAID 已降级', detail: 'fault.tgz', severity: 'critical' });
+  });
+
+  it('分析失败时显示失败原因并使用严重样式', () => {
+    expect(getRecentAnalysisPresentation({
+      status: 'failed',
+      displayName: 'failed.tgz',
+      failureMessage: '诊断包无法解压。'
+    })).toEqual({ title: '分析失败', detail: '诊断包无法解压。', severity: 'critical' });
+  });
+
+  it('报告已就绪但结果数据缺失时不误报未发现异常', () => {
+    expect(getRecentAnalysisPresentation({
+      status: 'report-ready',
+      displayName: 'missing-result.tgz'
+    })).toEqual({ title: 'missing-result.tgz', detail: 'missing-result.tgz', severity: 'info' });
+  });
+
   it('按稳定阶段枚举呈现五阶段状态，不依赖中文进度消息', () => {
     expect(getAnalysisStageItems('analyze-storage')).toEqual([
       { id: 'identify-package', label: '识别诊断包', state: 'complete' },
@@ -45,5 +76,12 @@ describe('分析中心工作区呈现', () => {
     expect(getNotificationActivation({ appId: 'analysis-center', event: 'host.notification.activated', payload: { kind: 'failure', packageId: 'package-2' } })).toEqual({ kind: 'failure', packageId: 'package-2' });
     expect(getNotificationActivation({ appId: 'analysis-center', event: 'packages.changed', payload: { kind: 'result', packageId: 'package-1' } })).toBeUndefined();
     expect(getNotificationActivation({ appId: 'analysis-center', event: 'host.notification.activated', payload: { kind: 'forged', packageId: 'package-1' } })).toBeUndefined();
+  });
+
+  it('删除确认明确列出将递归删除的解压目录', () => {
+    const message = getPackageDeletionConfirmation({ packageCount: 1, extractPaths: ['D:/Inbox/device'] });
+
+    expect(message).toContain('原诊断包、关联解压目录及目录内全部内容');
+    expect(message).toContain('D:/Inbox/device');
   });
 });

@@ -1,4 +1,4 @@
-import { basename } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 /**
  * 诊断包是分析中心管理的最小业务单元。
@@ -48,6 +48,21 @@ export function isDiagnosticPackagePath(filePath: string): boolean {
   const format = getDiagnosticPackageFormat(filePath);
   if (format !== 'zip') return format !== undefined;
   return basename(filePath).toLowerCase().startsWith('nas_server_log');
+}
+
+/**
+ * 新诊断包的解压目录与原文件同级，并移除完整的受支持格式后缀。
+ * `.tgz.temp` 必须整体移除，避免为了分析而改名原文件；空 stem 会指向源文件父目录，必须拒绝。
+ */
+export function getDiagnosticPackageExtractPath(sourcePath: string): string {
+  const source = resolve(sourcePath);
+  const fileName = basename(source);
+  const lowerName = fileName.toLowerCase();
+  const suffix = lowerName.endsWith('.tgz.temp') ? '.tgz.temp' : lowerName.endsWith('.tgz') ? '.tgz' : lowerName.endsWith('.zip') ? '.zip' : undefined;
+  if (!suffix) throw new Error('无法生成解压目录：诊断包格式不受支持');
+  const stem = fileName.slice(0, -suffix.length);
+  if (!stem.trim() || stem === '.' || stem === '..') throw new Error('诊断包文件名缺少可用名称，无法生成安全的解压目录');
+  return join(dirname(source), stem);
 }
 
 /**

@@ -35,6 +35,22 @@ export function getPackageTone(status: string, severity?: string): 'default' | '
   return 'default';
 }
 
+interface RecentAnalysisPresentationInput {
+  status: string;
+  displayName: string;
+  result?: { diagnoses: ReadonlyArray<{ title: string; severity: string }> };
+  failureMessage?: string;
+}
+
+/** 最近分析必须区分“确认无主要诊断”和“结果尚未取到”，避免把数据缺失误报为正常。 */
+export function getRecentAnalysisPresentation(input: RecentAnalysisPresentationInput): { title: string; detail: string; severity: string } {
+  if (input.status === 'failed') return { title: '分析失败', detail: input.failureMessage ?? '分析失败，请查看失败原因。', severity: 'critical' };
+  const diagnosis = input.result?.diagnoses[0];
+  if (diagnosis) return { title: diagnosis.title, detail: input.displayName, severity: diagnosis.severity };
+  if (input.result) return { title: '未发现明确异常', detail: input.displayName, severity: 'info' };
+  return { title: input.displayName, detail: input.displayName, severity: 'info' };
+}
+
 export function getAnalysisStageItems(stage: AnalysisTaskStage): Array<{ id: AnalysisTaskStage; label: string; state: 'complete' | 'current' | 'pending' }> {
   const currentIndex = ANALYSIS_STAGES.findIndex((item) => item.id === stage);
   return ANALYSIS_STAGES.map((item, index) => ({ ...item, state: index < currentIndex ? 'complete' : index === currentIndex ? 'current' : 'pending' }));
@@ -45,4 +61,10 @@ export function getNotificationActivation(event: AppHostEvent): { kind: 'result'
   const payload = event.payload as Record<string, unknown>;
   if ((payload.kind !== 'result' && payload.kind !== 'failure') || typeof payload.packageId !== 'string' || !payload.packageId) return undefined;
   return { kind: payload.kind, packageId: payload.packageId };
+}
+
+/** 删除确认必须展示物理目录，避免用户把“删除记录”误解为仅移出列表。 */
+export function getPackageDeletionConfirmation(preview: { packageCount: number; extractPaths: readonly string[] }): string {
+  const paths = preview.extractPaths.length > 0 ? preview.extractPaths.map((path) => `- ${path}`).join('\n') : '- 无';
+  return `将永久删除 ${preview.packageCount} 个原诊断包、关联解压目录及目录内全部内容，同时移除所有分析记录，是否继续？\n\n将删除的解压目录：\n${paths}`;
 }

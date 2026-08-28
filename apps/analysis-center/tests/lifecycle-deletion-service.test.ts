@@ -15,9 +15,11 @@ describe('诊断包完整生命周期删除', () => {
     const sourcePath = join(root, 'device.tgz');
     const extractPath = join(root, 'device');
     const reportPath = join(extractPath, 'Report', 'index.html');
+    const existingUserFilePath = join(extractPath, 'existing-user-file.txt');
     await writeFile(sourcePath, 'archive');
     await mkdir(join(extractPath, 'Report'), { recursive: true });
     await writeFile(reportPath, '<html>report</html>');
+    await writeFile(existingUserFilePath, '删除整个合并目录时也会删除此文件');
     const repository = new WorkspaceRepository(join(root, 'workbench.db'));
     const diagnosticPackage = { id: 'c225bc60-8cf5-4f0d-993f-1a06a547ab46', sourcePath, extractPath, reportPath, displayName: 'device.tgz', detectedAt: new Date().toISOString(), status: 'report-ready' as const, taskIds: ['123e4567-e89b-42d3-a456-426614174000'], caseId: 'case-1' };
     repository.upsertPackage(diagnosticPackage);
@@ -33,6 +35,7 @@ describe('诊断包完整生命周期删除', () => {
     expect(preview).toMatchObject({ packageCount: 1, taskCount: 1, caseCount: 1, analysisRecordCount: 1, reportRecordCount: 1, sourcePaths: [sourcePath], extractPaths: [extractPath], reportPaths: [reportPath] });
     await expect(access(sourcePath)).rejects.toThrow();
     await expect(access(extractPath)).rejects.toThrow();
+    await expect(access(existingUserFilePath)).rejects.toThrow();
     expect(repository.listPackages()).toEqual([]);
     expect(repository.listTasks()).toEqual([]);
     repository.close();

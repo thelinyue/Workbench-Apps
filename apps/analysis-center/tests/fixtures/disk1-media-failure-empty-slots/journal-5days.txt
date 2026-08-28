@@ -1,0 +1,7 @@
+Aug 28 19:04:14 jitao kernel: ata2: SATA link down (SStatus 0 SControl 300)
+Aug 28 19:04:14 jitao kernel: ata3: SATA link down (SStatus 0 SControl 300)
+Aug 28 19:04:14 jitao kernel: ata4: SATA link down (SStatus 0 SControl 300)
+Aug 28 19:04:14 jitao kernel: ata1.00: error: { UNC }
+Aug 28 19:04:14 jitao kernel: sd 0:0:0:0: [sda] Sense Key : Medium Error [current]
+Aug 28 19:04:14 jitao kernel: sd 0:0:0:0: [sda] Add. Sense: Unrecovered read error - auto reallocate failed
+Aug 28 19:04:14 jitao kernel: I/O error, dev sda, sector 32000009 op 0x0:(READ)

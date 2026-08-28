@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import * as tar from 'tar';
@@ -46,8 +46,7 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
   const archiveFormat = getDiagnosticPackageFormat(request.sourcePath);
   if (!archiveFormat) throw new Error('仅支持 .tgz、.tgz.temp 或 .zip 格式的诊断包');
   request.onProgress?.({ progress: 5, stage: 'identify-package', message: '正在验证诊断包' });
-  await rm(request.extractDirectory, { recursive: true, force: true });
-  await mkdir(request.extractDirectory, { recursive: true });
+  await prepareExtractDirectory(request.extractDirectory);
   try {
     request.onProgress?.({ progress: 15, stage: 'identify-package', message: '正在解压诊断包' });
     if (archiveFormat === 'tgz') await tar.x({ file: request.sourcePath, cwd: request.extractDirectory, gzip: true, strict: true });
@@ -129,8 +128,7 @@ export async function runArchiveAnalysis(request: ArchiveAnalysisRequest): Promi
 
   request.onProgress?.({ progress: 5, message: '正在准备诊断包' });
 
-  await rm(request.extractDirectory, { recursive: true, force: true });
-  await mkdir(request.extractDirectory, { recursive: true });
+  await prepareExtractDirectory(request.extractDirectory);
 
   try {
     request.onProgress?.({ progress: 12, message: '正在解压诊断包' });
@@ -156,6 +154,24 @@ export async function runArchiveAnalysis(request: ArchiveAnalysisRequest): Promi
   request.onProgress?.({ progress: 98, message: '正在完成报告索引' });
 
   return { analysis, structured, reportPath };
+}
+
+/**
+ * 同级解压目录允许复用并合并写入，但不能把普通文件或符号链接当作目录。
+ * 这里只准备根目录，不清理既有内容；旧文件继续参与扫描是产品已确认的合并语义。
+ */
+async function prepareExtractDirectory(extractDirectory: string): Promise<void> {
+  try {
+    const info = await lstat(extractDirectory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (info?.isSymbolicLink()) throw new Error('解压路径不能是符号链接');
+    if (info && !info.isDirectory()) throw new Error('解压路径已存在且不是文件夹');
+    if (!info) await mkdir(extractDirectory, { recursive: true });
+  } catch (error) {
+    throw new Error(`无法准备诊断包解压目录：${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /** 保留插件的 Report/static 与 Report/structured 目录约定，所有报告产物均可独立打开。 */

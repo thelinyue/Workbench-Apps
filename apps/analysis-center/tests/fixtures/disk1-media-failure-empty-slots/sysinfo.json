@@ -1,0 +1,23 @@
+{
+  "disk": {
+    "devices": [
+      {
+        "disk_info": {
+          "label": "Hard Drive 1",
+          "slot": "ata1",
+          "dev_name": "/dev/sda",
+          "model": "WDC WD30EFRX-68EUZN0",
+          "serial": "WD-WC3K21EAP7S3",
+          "used_for": "Unused"
+        },
+        "smart_info": {
+          "report": [
+            { "id": 5, "name": "Reallocated_Sector_Ct", "raw": 0 },
+            { "id": 197, "name": "Current_Pending_Sector", "raw": 342 },
+            { "id": 198, "name": "Offline_Uncorrectable", "raw": 0 }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -58,11 +58,32 @@ it('V1 分析会解压并读取 gzip 轮转内核日志', async () => {
     disk_info: { dev_name: '/dev/sda', label: 'Hard Drive 2', slot: 'ata2', used_for: 'Unused' },
     smart_info: { report: [] }
   }] } }));
-  const archivePath = join(root, 'fixture.tgz');
+  const archivePath = join(root, 'fixture.tgz.temp');
   await tar.c({ gzip: true, file: archivePath, cwd: root }, ['kern.log.1.gz', 'mdstat.log', 'sysinfo.json']);
+  const extractDirectory = join(root, 'extracted');
+  await mkdir(extractDirectory);
+  const existingPath = join(extractDirectory, 'existing-user-file.txt');
+  const existingKernelLogPath = join(extractDirectory, 'kern.log');
+  await writeFile(existingPath, 'keep');
+  await writeFile(existingKernelLogPath, '2026-08-26T03:13:01+08:00 kernel: Buffer I/O error on dev sdz');
 
-  const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+  const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory });
 
-  expect(result.result.metadata.processedFiles).toBe(3);
+  expect(result.result.metadata.processedFiles).toBe(4);
   expect(result.result.diagnoses[0]).toMatchObject({ id: 'storage.device.media_failure', primaryResource: '/dev/sda' });
+  expect(result.result.findings).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'storage.io_error', affectedResources: expect.arrayContaining(['/dev/sdz']) })]));
+  await expect(access(archivePath)).resolves.toBeUndefined();
+  await expect(readFile(existingPath, 'utf8')).resolves.toBe('keep');
+});
+
+it('V1 分析在解压目标不是目录时返回中文错误', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-invalid-extract-'));
+  directories.push(root);
+  const archivePath = join(root, 'fixture.tgz');
+  await writeFile(join(root, 'placeholder.log'), 'placeholder');
+  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['placeholder.log']);
+  const extractPath = join(root, 'device');
+  await writeFile(extractPath, 'not-a-directory');
+
+  await expect(runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: extractPath })).rejects.toThrow('无法准备诊断包解压目录');
 });
