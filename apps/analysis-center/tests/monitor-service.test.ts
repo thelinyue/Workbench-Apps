@@ -19,7 +19,7 @@ describe('监控目录', () => {
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
 
-    repository.saveMonitorSettings({ directory, enabled: true, scanIntervalMinutes: 5 });
+    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: false, scanIntervalMinutes: 3 });
     await monitor.scanNow();
     expect(analysis.listPackages()).toEqual([]);
     await monitor.scanNow();
@@ -31,6 +31,62 @@ describe('监控目录', () => {
     repository.close();
   });
 
+  it('启用监控时把目录存量建立为基线，只自动分析之后新增的诊断包', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'analysis-monitor-auto-'));
+    directories.push(directory);
+    await writeFile(join(directory, 'existing.tgz'), 'existing diagnostic archive');
+    const repository = new WorkspaceRepository(join(directory, 'analysis-center.db'));
+    const analysis = new AnalysisCenterService(repository);
+    const enqueued: string[] = [];
+    const monitor = new MonitorDirectoryService(repository, analysis, { enqueue: async (packageId) => { enqueued.push(packageId); } });
+
+    try {
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
+      await monitor.start();
+      await monitor.scanNow();
+      expect(analysis.listPackages()).toEqual([]);
+
+      await writeFile(join(directory, 'new.tgz'), 'new diagnostic archive');
+      await monitor.scanNow();
+      await monitor.scanNow();
+
+      expect(analysis.listPackages()).toEqual([expect.objectContaining({ displayName: 'new.tgz', sourceSizeBytes: 22 })]);
+      expect(enqueued).toEqual([analysis.listPackages()[0]!.id]);
+
+      await monitor.scanExistingNow();
+      expect(analysis.listPackages()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ displayName: 'existing.tgz', status: 'pending' }),
+        expect.objectContaining({ displayName: 'new.tgz' })
+      ]));
+      expect(enqueued).toHaveLength(1);
+    } finally {
+      monitor.close();
+      repository.close();
+    }
+  });
+
+  it('关闭自动分析后仍登记扫描到的新包但不加入任务队列', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'analysis-monitor-manual-'));
+    directories.push(directory);
+    await writeFile(join(directory, 'manual.tgz'), 'diagnostic archive');
+    const repository = new WorkspaceRepository(join(directory, 'analysis-center.db'));
+    const analysis = new AnalysisCenterService(repository);
+    const enqueue = vi.fn(async () => undefined);
+    const monitor = new MonitorDirectoryService(repository, analysis, { enqueue });
+
+    try {
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: false, scanIntervalMinutes: 1 });
+      await monitor.scanNow();
+      await monitor.scanNow();
+
+      expect(analysis.listPackages()).toEqual([expect.objectContaining({ displayName: 'manual.tgz', status: 'pending' })]);
+      expect(enqueue).not.toHaveBeenCalled();
+    } finally {
+      monitor.close();
+      repository.close();
+    }
+  });
+
   it('忽略尚在下载的临时扩展名', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'analysis-monitor-temp-'));
     directories.push(directory);
@@ -39,7 +95,7 @@ describe('监控目录', () => {
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
 
-    repository.saveMonitorSettings({ directory, enabled: true, scanIntervalMinutes: 5 });
+    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 3 });
     await monitor.scanNow();
     await monitor.scanNow();
     expect(analysis.listPackages()).toEqual([]);
@@ -48,21 +104,24 @@ describe('监控目录', () => {
     repository.close();
   });
 
-  it('启动扫描会自行完成第二次稳定采样', async () => {
+  it('周期扫描只处理启用监控后新增并完成两次稳定采样的文件', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'analysis-monitor-startup-'));
     directories.push(directory);
-    await writeFile(join(directory, 'startup.tgz'), 'diagnostic archive');
     const repository = new WorkspaceRepository(join(directory, 'analysis-center.db'));
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
       repository.saveMonitorScanIntervalMinutes(1);
       vi.useFakeTimers();
       const scanNow = vi.spyOn(monitor, 'scanNow');
       await monitor.start();
-      expect(scanNow).toHaveBeenCalledTimes(1);
+      await writeFile(join(directory, 'startup.tgz'), 'diagnostic archive');
+      expect(scanNow).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await scanNow.mock.results[0]?.value;
+      expect(analysis.listPackages()).toEqual([]);
       await vi.advanceTimersByTimeAsync(60_000);
       await scanNow.mock.results[1]?.value;
       expect(analysis.listPackages()).toHaveLength(1);
@@ -77,23 +136,23 @@ describe('监控目录', () => {
     vi.useFakeTimers();
     const directory = await mkdtemp(join(tmpdir(), 'analysis-monitor-interval-'));
     directories.push(directory);
-    await writeFile(join(directory, 'interval.tgz'), 'diagnostic archive');
     const repository = new WorkspaceRepository(join(directory, 'analysis-center.db'));
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
       repository.saveMonitorScanIntervalMinutes(1);
       const scanNow = vi.spyOn(monitor, 'scanNow');
       await monitor.start();
+      await writeFile(join(directory, 'interval.tgz'), 'diagnostic archive');
 
       await vi.advanceTimersByTimeAsync(59_999);
-      expect(scanNow).toHaveBeenCalledTimes(1);
+      expect(scanNow).not.toHaveBeenCalled();
       expect(analysis.listPackages()).toEqual([]);
       await vi.advanceTimersByTimeAsync(1);
-      await scanNow.mock.results[1]?.value;
-      expect(analysis.listPackages()).toHaveLength(1);
+      await scanNow.mock.results[0]?.value;
+      expect(analysis.listPackages()).toHaveLength(0);
     } finally {
       monitor.close();
       repository.close();
@@ -112,12 +171,12 @@ describe('监控目录', () => {
     const pendingScan = new Promise<void>((resolve) => { finishScan = resolve; });
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
       await monitor.start();
       vi.spyOn(monitor, 'scanNow').mockImplementation(() => pendingScan);
 
       vi.advanceTimersByTime(60_000);
-      repository.saveMonitorSettings({ directory, enabled: false, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: false, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
       await monitor.reconfigure();
       finishScan?.();
       await Promise.resolve();
@@ -139,7 +198,7 @@ describe('监控目录', () => {
     const repository = new WorkspaceRepository(join(directory, 'analysis-center.db'));
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
-    repository.saveMonitorSettings({ directory, enabled: true, scanIntervalMinutes: 1 });
+    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
     await monitor.scanNow();
 
     let beginImport: (() => void) | undefined;
@@ -178,7 +237,7 @@ describe('监控目录', () => {
     const repository = new WorkspaceRepository(join(root, 'analysis-center.db'));
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
-    repository.saveMonitorSettings({ directory: oldDirectory, enabled: true, scanIntervalMinutes: 1 });
+    repository.saveMonitorSettings({ directory: oldDirectory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
     await monitor.scanNow();
 
     let beginImport: (() => void) | undefined;
@@ -195,7 +254,7 @@ describe('监控目录', () => {
     try {
       const scanning = monitor.scanNow();
       await importStarted;
-      repository.saveMonitorSettings({ directory: newDirectory, enabled: false, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory: newDirectory, enabled: false, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
       await monitor.reconfigure();
       releaseImport?.();
       await expect(scanning).resolves.toBeUndefined();
@@ -216,7 +275,7 @@ describe('监控目录', () => {
     const monitor = new MonitorDirectoryService(repository, analysis);
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
       await monitor.start();
       expect(monitor.getStatus()).toEqual(expect.objectContaining({ state: 'paused', warning: expect.stringContaining('无法访问') }));
     } finally {

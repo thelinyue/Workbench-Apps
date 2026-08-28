@@ -26,7 +26,7 @@ export class AnalysisCenterService {
         const path = join(directory, entry);
         const info = await stat(path);
         if (!info.isFile() || !isDiagnosticPackagePath(path)) continue;
-        discovered.push(this.registerDiagnosticPackage(path));
+        discovered.push(this.registerDiagnosticPackage(path, info.size));
       }
     }
     return discovered;
@@ -45,16 +45,19 @@ export class AnalysisCenterService {
       throw new Error('仅支持 .tgz、.tgz.temp 或文件名以 nas_server_log 开头的 .zip 格式诊断包');
     }
     if (!canContinue()) throw new Error('监控目录配置已更新，已取消旧扫描');
-    return this.registerDiagnosticPackage(sourcePath);
+    return this.registerDiagnosticPackage(sourcePath, info.size);
   }
 
-  private registerDiagnosticPackage(sourcePath: string): DiagnosticPackage {
+  private registerDiagnosticPackage(sourcePath: string, sourceSizeBytes: number): DiagnosticPackage {
     const existing = this.repository.listPackages().find((item) => item.sourcePath.toLowerCase() === sourcePath.toLowerCase());
-    if (existing) return existing;
+    if (existing) {
+      if (existing.sourceSizeBytes === undefined) this.repository.upsertPackage({ ...existing, sourceSizeBytes });
+      return { ...existing, sourceSizeBytes: existing.sourceSizeBytes ?? sourceSizeBytes };
+    }
     const displayName = basename(sourcePath);
     const id = randomUUID();
     const item: DiagnosticPackage = {
-      id, sourcePath, extractPath: this.repository.getExtractDirectory(id), displayName,
+      id, sourcePath, extractPath: this.repository.getExtractDirectory(id), displayName, sourceSizeBytes,
       detectedAt: new Date().toISOString(), status: 'pending', taskIds: [], caseId: randomUUID()
     };
     this.repository.upsertPackage(item);

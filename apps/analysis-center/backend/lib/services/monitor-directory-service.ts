@@ -6,6 +6,10 @@ import { isDiagnosticPackagePath } from '../domain/diagnostic-package';
 import type { WorkspaceRepository } from '../data/workspace-repository';
 import type { AnalysisCenterService } from './analysis-center-service';
 
+interface MonitorTaskQueue {
+  enqueue(packageId: string): Promise<void>;
+}
+
 /**
  * 单目录监控器。
  *
@@ -17,12 +21,14 @@ export class MonitorDirectoryService extends EventEmitter {
   private watchedDirectory: string | undefined;
   private scanTimer: NodeJS.Timeout | undefined;
   private readonly observations = new Map<string, { identity: string; stableCount: number }>();
+  private readonly baselinePaths = new Set<string>();
   private status: { state: 'disabled' | 'watching' | 'paused'; warning?: string } = { state: 'disabled' };
   private generation = 0;
 
   public constructor(
     private readonly repository: WorkspaceRepository,
-    private readonly analysis: AnalysisCenterService
+    private readonly analysis: AnalysisCenterService,
+    private readonly tasks?: MonitorTaskQueue
   ) { super(); }
 
   public async start(): Promise<void> {
@@ -30,7 +36,7 @@ export class MonitorDirectoryService extends EventEmitter {
     const settings = this.repository.getMonitorSettings();
     if (!settings.enabled || !settings.directory) { this.setStatus({ state: 'disabled' }); return; }
     if (!this.watchDirectory(settings.directory, generation)) return;
-    try { await this.scanNow(generation); } catch (error) { if (this.isCurrent(generation)) this.pause(settings.directory, error); return; }
+    try { await this.establishBaseline(settings.directory, generation); } catch (error) { if (this.isCurrent(generation)) this.pause(settings.directory, error); return; }
     if (!this.isCurrent(generation)) return;
     this.setStatus({ state: 'watching' });
     this.scheduleNextScan(settings.scanIntervalMinutes, generation);
@@ -49,28 +55,67 @@ export class MonitorDirectoryService extends EventEmitter {
     this.watcher = undefined;
     this.watchedDirectory = undefined;
     this.observations.clear();
+    this.baselinePaths.clear();
   }
   public getStatus(): { state: 'disabled' | 'watching' | 'paused'; warning?: string } { return this.status; }
 
   public async scanNow(generation: number = this.generation): Promise<void> { await this.scanNowForGeneration(generation); }
 
+  /**
+   * 用户主动扫描存量时直接登记当前目录内尚未导入的诊断包，但不触发自动分析。
+   * 自动分析只属于启用监控后新增文件的后台流程，避免一次设置变更意外启动大量历史任务。
+   */
+  public async scanExistingNow(generation: number = this.generation): Promise<void> {
+    const settings = this.repository.getMonitorSettings();
+    if (!settings.directory) return;
+    const sourcePaths = await this.listDiagnosticPackagePaths(settings.directory);
+    for (const sourcePath of sourcePaths) {
+      if (!this.isCurrent(generation)) return;
+      const countBefore = this.analysis.listPackages().length;
+      try { await this.analysis.importPackage(sourcePath, () => this.isCurrent(generation)); }
+      catch (error) { if (!this.isCurrent(generation)) return; throw error; }
+      if (this.analysis.listPackages().length !== countBefore) this.emit('changed');
+    }
+  }
+
   /** 关闭或重配后使旧扫描失效，避免其完成后导入旧目录文件或重新创建旧周期定时器。 */
   private async scanNowForGeneration(generation: number): Promise<void> {
     const settings = this.repository.getMonitorSettings();
     if (!settings.enabled || !settings.directory) return;
-    let names: string[];
-    try { names = await readdir(settings.directory); }
-    catch (error) { throw new Error(`无法扫描监控目录 ${settings.directory}：${error instanceof Error ? error.message : String(error)}`); }
+    const sourcePaths = await this.listDirectoryPaths(settings.directory);
     if (!this.isCurrent(generation)) return;
     const current = new Set<string>();
-    for (const name of names) {
+    for (const sourcePath of sourcePaths) {
       if (!this.isCurrent(generation)) return;
-      const sourcePath = join(settings.directory, name);
-      current.add(sourcePath.toLowerCase());
+      const pathKey = sourcePath.toLowerCase();
+      current.add(pathKey);
+      if (this.baselinePaths.has(pathKey)) continue;
       await this.observe(sourcePath, generation);
     }
     if (!this.isCurrent(generation)) return;
     for (const path of this.observations.keys()) if (!current.has(path.toLowerCase())) this.observations.delete(path);
+    for (const path of this.baselinePaths) if (!current.has(path)) this.baselinePaths.delete(path);
+  }
+
+  /**
+   * 启用或重配监控时只记录目录现状。基线中的文件不会进入稳定性采样；只有它从目录消失后
+   * 再次出现，或出现全新路径，才会被视为监控期间新增的诊断包。
+   */
+  private async establishBaseline(directory: string, generation: number): Promise<void> {
+    const sourcePaths = await this.listDiagnosticPackagePaths(directory);
+    if (!this.isCurrent(generation)) return;
+    this.baselinePaths.clear();
+    for (const sourcePath of sourcePaths) this.baselinePaths.add(sourcePath.toLowerCase());
+  }
+
+  private async listDiagnosticPackagePaths(directory: string): Promise<string[]> {
+    const sourcePaths = await this.listDirectoryPaths(directory);
+    return sourcePaths.filter((sourcePath) => isDiagnosticPackagePath(sourcePath) && !/\.(?:crdownload|download|part|partial)$/i.test(sourcePath));
+  }
+
+  private async listDirectoryPaths(directory: string): Promise<string[]> {
+    try { return (await readdir(directory)).map((name) => join(directory, name)); }
+    catch (error) { throw new Error(`无法扫描监控目录 ${directory}：${error instanceof Error ? error.message : String(error)}`); }
   }
 
   private watchDirectory(directory: string, generation: number): boolean {
@@ -117,7 +162,12 @@ export class MonitorDirectoryService extends EventEmitter {
     if (stableCount >= 2) {
       const countBefore = this.analysis.listPackages().length;
       try {
-        await this.analysis.importPackage(sourcePath, () => this.isCurrent(generation));
+        const diagnosticPackage = await this.analysis.importPackage(sourcePath, () => this.isCurrent(generation));
+        if (!this.isCurrent(generation)) return;
+        if (this.analysis.listPackages().length !== countBefore && this.repository.getMonitorSettings().autoAnalyzeEnabled && this.tasks) {
+          try { await this.tasks.enqueue(diagnosticPackage.id); }
+          catch (error) { console.error(`自动加入分析队列失败（${diagnosticPackage.displayName}）：${error instanceof Error ? error.message : String(error)}`); }
+        }
       } catch (error) {
         // 关闭或重配会主动取消旧扫描；该取消不应在已失效的异步链中形成未处理错误。
         if (!this.isCurrent(generation)) return;

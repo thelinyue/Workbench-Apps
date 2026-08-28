@@ -34,6 +34,7 @@ function saveTask(repository: WorkspaceRepository, id: string, status: AnalysisT
     createdAt: `2026-08-25T10:25:${id.slice(-2)}.000Z`,
     startedAt,
     progress: status === 'succeeded' || status === 'failed' ? 100 : 0,
+    stage: status === 'succeeded' ? 'form-conclusion' : 'identify-package',
     message: status
   });
 }
@@ -51,7 +52,7 @@ function saveAnalysisRecord(repository: WorkspaceRepository, taskId: string, sta
 
 describe('分析任务清理', () => {
   it('队列按创建先后 FIFO 选择下一项，与界面的前方任务数一致', () => {
-    const task = (id: string, createdAt: string): AnalysisTaskRecord => ({ id, packageId: id, scope: 'comprehensive', status: 'queued', createdAt, progress: 0, message: '等待综合分析' });
+    const task = (id: string, createdAt: string): AnalysisTaskRecord => ({ id, packageId: id, scope: 'comprehensive', status: 'queued', createdAt, progress: 0, stage: 'identify-package', message: '等待综合分析' });
     const next = selectNextQueuedTask([
       task('task-c', '2026-08-27T10:03:00.000Z'),
       task('task-b', '2026-08-27T10:02:00.000Z'),

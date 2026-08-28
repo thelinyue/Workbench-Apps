@@ -17,7 +17,7 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
   const archivePath = join(root, 'fixture.tgz');
   await tar.c({ gzip: true, file: archivePath, cwd: root }, ['kern.log', 'mdstat.log', 'sysinfo.json']);
 
-  const progress: Array<{ progress: number; message: string }> = [];
+  const progress: Array<{ progress: number; stage: string; message: string }> = [];
   const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted'), onProgress: (update) => progress.push(update) });
 
   expect(result.result.diagnoses[0]).toMatchObject({ id: 'storage.device.suspected_failure', primaryResource: '/dev/sdc' });
@@ -34,4 +34,11 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
     '正在解析日志（3/3）'
   ]));
   expect(progress.every((item, index) => index === 0 || item.progress >= progress[index - 1].progress)).toBe(true);
+  expect([...new Set(progress.map((item) => item.stage))]).toEqual([
+    'identify-package',
+    'parse-system-events',
+    'analyze-storage',
+    'aggregate-anomalies',
+    'form-conclusion'
+  ]);
 });

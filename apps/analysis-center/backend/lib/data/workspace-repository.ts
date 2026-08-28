@@ -5,10 +5,12 @@ import type { DiagnosticPackage, DiagnosticPackageStatus } from '../domain/diagn
 import type { AnalysisResult } from '../analysis-v1/pipeline';
 
 export const MIN_MONITOR_SCAN_INTERVAL_MINUTES = 1;
-export const DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES = 5;
-export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'comprehensive' | 'storage'; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; createdAt: string; startedAt?: string; progress: number; message: string; errorMessage?: string; }
+export const MAX_MONITOR_SCAN_INTERVAL_MINUTES = 3;
+export const DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES = 1;
+export type AnalysisTaskStage = 'identify-package' | 'parse-system-events' | 'analyze-storage' | 'aggregate-anomalies' | 'form-conclusion';
+export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'comprehensive' | 'storage'; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; createdAt: string; startedAt?: string; progress: number; stage: AnalysisTaskStage; message: string; errorMessage?: string; }
 export interface AnalysisRecord { id: string; packageId: string; taskId: string; status: AnalysisTaskRecord['status']; createdAt: string; updatedAt: string; }
-export interface MonitorSettings { directory?: string; enabled: boolean; scanIntervalMinutes: number; }
+export interface MonitorSettings { directory?: string; enabled: boolean; autoAnalyzeEnabled: boolean; scanIntervalMinutes: number; }
 export interface AnalysisFailureRecord { taskId: string; packageId: string; stage: string; errorMessage: string; inputMetadata: Record<string, string>; createdAt: string; }
 
 const COMPLETED_TASK_STATUSES = ['succeeded', 'failed', 'cancelled'] as const;
@@ -48,23 +50,26 @@ export class WorkspaceRepository {
   public getMonitorScanIntervalMinutes(): number {
     const value = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorScanIntervalMinutes'").get() as { value: string } | undefined;
     const minutes = value ? Number(value.value) : DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES;
-    return Number.isInteger(minutes) && minutes >= MIN_MONITOR_SCAN_INTERVAL_MINUTES ? minutes : DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES;
+    return Number.isInteger(minutes) && minutes >= MIN_MONITOR_SCAN_INTERVAL_MINUTES
+      ? Math.min(minutes, MAX_MONITOR_SCAN_INTERVAL_MINUTES)
+      : DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES;
   }
 
   public saveMonitorScanIntervalMinutes(minutes: number): void {
     if (!Number.isInteger(minutes) || minutes < MIN_MONITOR_SCAN_INTERVAL_MINUTES) throw new Error('自动扫描间隔至少为 1 分钟');
+    if (minutes > MAX_MONITOR_SCAN_INTERVAL_MINUTES) throw new Error('自动扫描间隔最多为 3 分钟');
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorScanIntervalMinutes', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(minutes));
   }
 
   public upsertPackage(item: DiagnosticPackage): void {
     this.database.prepare(`
-      INSERT INTO diagnostic_packages (id, source_path, extract_path, report_path, display_name, detected_at, status, task_ids, case_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO diagnostic_packages (id, source_path, extract_path, report_path, display_name, source_size_bytes, detected_at, status, task_ids, case_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         source_path = excluded.source_path, extract_path = excluded.extract_path, report_path = excluded.report_path,
-        display_name = excluded.display_name, detected_at = excluded.detected_at, status = excluded.status,
+        display_name = excluded.display_name, source_size_bytes = excluded.source_size_bytes, detected_at = excluded.detected_at, status = excluded.status,
         task_ids = excluded.task_ids, case_id = excluded.case_id
-    `).run(item.id, item.sourcePath, item.extractPath, item.reportPath ?? null, item.displayName, item.detectedAt, item.status, JSON.stringify(item.taskIds), item.caseId);
+    `).run(item.id, item.sourcePath, item.extractPath, item.reportPath ?? null, item.displayName, item.sourceSizeBytes ?? null, item.detectedAt, item.status, JSON.stringify(item.taskIds), item.caseId);
   }
 
   /** 案例、报告索引与分析记录单独建表，使删除预览能够准确说明关联数据。 */
@@ -88,11 +93,13 @@ export class WorkspaceRepository {
   public getMonitorSettings(): MonitorSettings {
     const directoryRow = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorDirectory'").get() as { value: string } | undefined;
     const enabledRow = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorEnabled'").get() as { value: string } | undefined;
+    const autoAnalyzeRow = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorAutoAnalyzeEnabled'").get() as { value: string } | undefined;
     const legacyDirectory = this.getMonitorDirectories()[0];
     const directory = directoryRow?.value || legacyDirectory;
     return {
       directory: directory || undefined,
       enabled: enabledRow ? enabledRow.value === 'true' : Boolean(directory),
+      autoAnalyzeEnabled: autoAnalyzeRow ? autoAnalyzeRow.value === 'true' : true,
       scanIntervalMinutes: this.getMonitorScanIntervalMinutes()
     };
   }
@@ -102,6 +109,7 @@ export class WorkspaceRepository {
     this.saveMonitorScanIntervalMinutes(settings.scanIntervalMinutes);
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorDirectory', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(directory ?? '');
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorEnabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(Boolean(directory && settings.enabled)));
+    this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorAutoAnalyzeEnabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(settings.autoAnalyzeEnabled));
     this.saveMonitorDirectories(directory ? [directory] : []);
   }
 
@@ -154,22 +162,22 @@ export class WorkspaceRepository {
   public getPackage(id: string): DiagnosticPackage | undefined { return this.listPackages().find((item) => item.id === id); }
 
   public listPackages(): DiagnosticPackage[] {
-    const rows = this.database.prepare(`SELECT id, source_path AS sourcePath, extract_path AS extractPath, report_path AS reportPath, display_name AS displayName, detected_at AS detectedAt, status, task_ids AS taskIds, case_id AS caseId FROM diagnostic_packages ORDER BY detected_at DESC`).all() as unknown as Array<Omit<DiagnosticPackage, 'status' | 'taskIds'> & { status: DiagnosticPackageStatus; taskIds: string }>;
-    return rows.map((item) => ({ ...item, reportPath: item.reportPath ?? undefined, taskIds: JSON.parse(item.taskIds) as string[] }));
+    const rows = this.database.prepare(`SELECT id, source_path AS sourcePath, extract_path AS extractPath, report_path AS reportPath, display_name AS displayName, source_size_bytes AS sourceSizeBytes, detected_at AS detectedAt, status, task_ids AS taskIds, case_id AS caseId FROM diagnostic_packages ORDER BY detected_at DESC`).all() as unknown as Array<Omit<DiagnosticPackage, 'status' | 'taskIds'> & { status: DiagnosticPackageStatus; taskIds: string }>;
+    return rows.map((item) => ({ ...item, reportPath: item.reportPath ?? undefined, sourceSizeBytes: item.sourceSizeBytes ?? undefined, taskIds: JSON.parse(item.taskIds) as string[] }));
   }
 
   public upsertTask(task: AnalysisTaskRecord): void {
     this.database.prepare(`
-      INSERT INTO analysis_tasks (id, package_id, scope, status, created_at, started_at, progress, message, error_message)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET scope = excluded.scope, status = excluded.status, started_at = excluded.started_at, progress = excluded.progress, message = excluded.message, error_message = excluded.error_message
-    `).run(task.id, task.packageId, task.scope, task.status, task.createdAt, task.startedAt ?? null, task.progress, task.message, task.errorMessage ?? null);
+      INSERT INTO analysis_tasks (id, package_id, scope, status, created_at, started_at, progress, stage, message, error_message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET scope = excluded.scope, status = excluded.status, started_at = excluded.started_at, progress = excluded.progress, stage = excluded.stage, message = excluded.message, error_message = excluded.error_message
+    `).run(task.id, task.packageId, task.scope, task.status, task.createdAt, task.startedAt ?? null, task.progress, task.stage, task.message, task.errorMessage ?? null);
   }
 
   public getTask(id: string): AnalysisTaskRecord | undefined { return this.listTasks().find((item) => item.id === id); }
 
   public listTasks(): AnalysisTaskRecord[] {
-    return this.database.prepare(`SELECT id, package_id AS packageId, scope, status, created_at AS createdAt, started_at AS startedAt, progress, message, error_message AS errorMessage FROM analysis_tasks ORDER BY created_at DESC`).all() as unknown as AnalysisTaskRecord[];
+    return this.database.prepare(`SELECT id, package_id AS packageId, scope, status, created_at AS createdAt, started_at AS startedAt, progress, stage, message, error_message AS errorMessage FROM analysis_tasks ORDER BY created_at DESC`).all() as unknown as AnalysisTaskRecord[];
   }
 
   /**
@@ -228,8 +236,8 @@ export class WorkspaceRepository {
   private createSchema(): void {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS diagnostic_packages (id TEXT PRIMARY KEY, source_path TEXT NOT NULL, extract_path TEXT NOT NULL, report_path TEXT, display_name TEXT NOT NULL, detected_at TEXT NOT NULL, status TEXT NOT NULL, task_ids TEXT NOT NULL, case_id TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS analysis_tasks (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT, progress INTEGER NOT NULL, message TEXT NOT NULL, error_message TEXT, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS diagnostic_packages (id TEXT PRIMARY KEY, source_path TEXT NOT NULL, extract_path TEXT NOT NULL, report_path TEXT, display_name TEXT NOT NULL, source_size_bytes INTEGER, detected_at TEXT NOT NULL, status TEXT NOT NULL, task_ids TEXT NOT NULL, case_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS analysis_tasks (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT, progress INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'identify-package', message TEXT NOT NULL, error_message TEXT, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS analysis_cases (id TEXT PRIMARY KEY, package_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS analysis_records (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE, FOREIGN KEY(task_id) REFERENCES analysis_tasks(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS report_index (package_id TEXT PRIMARY KEY, path TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
@@ -238,6 +246,8 @@ export class WorkspaceRepository {
     `);
     try { this.database.exec("ALTER TABLE analysis_tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'comprehensive';"); } catch { /* 已升级数据库会报告重复列，保持兼容。 */ }
     try { this.database.exec('ALTER TABLE analysis_tasks ADD COLUMN started_at TEXT;'); } catch { /* 已升级数据库会报告重复列，保持兼容。 */ }
+    try { this.database.exec('ALTER TABLE diagnostic_packages ADD COLUMN source_size_bytes INTEGER;'); } catch { /* 新建或已升级数据库均无需处理。 */ }
+    try { this.database.exec("ALTER TABLE analysis_tasks ADD COLUMN stage TEXT NOT NULL DEFAULT 'identify-package';"); } catch { /* 新建或已升级数据库均无需处理。 */ }
     try { this.database.exec("ALTER TABLE analysis_failures ADD COLUMN input_metadata TEXT NOT NULL DEFAULT '{}';"); } catch { /* 新建或已升级数据库均无需处理。 */ }
   }
 }

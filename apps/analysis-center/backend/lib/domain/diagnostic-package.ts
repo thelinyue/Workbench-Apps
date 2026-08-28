@@ -14,6 +14,7 @@ export interface DiagnosticPackage {
   extractPath: string;
   reportPath?: string;
   displayName: string;
+  sourceSizeBytes?: number;
   detectedAt: string;
   status: DiagnosticPackageStatus;
   taskIds: string[];

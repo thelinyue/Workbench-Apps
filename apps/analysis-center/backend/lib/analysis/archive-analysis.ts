@@ -14,6 +14,7 @@ import bootstrapScript from './static/bootstrap.bundle.min.js?raw';
 import { analyzeStructuredExtract, type StructuredAnalysis } from './structured-analysis';
 import { analyzeV1Sources, type AnalysisResult as V1AnalysisResult } from '../analysis-v1/pipeline';
 import { selectImportantFindings } from '../../../shared/finding-presentation';
+import type { AnalysisTaskStage } from '../data/workspace-repository';
 
 export type AnalysisScope = 'comprehensive' | 'storage';
 
@@ -22,7 +23,7 @@ export interface ArchiveAnalysisRequest {
   extractDirectory: string;
   rules: AnalyzerRuleCatalog;
   scope?: AnalysisScope;
-  onProgress?: (progress: { progress: number; message: string }) => void;
+  onProgress?: (progress: { progress: number; stage?: AnalysisTaskStage; message: string }) => void;
 }
 
 export interface ArchiveAnalysisResult {
@@ -43,25 +44,25 @@ export interface V1ArchiveAnalysisResult {
 export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest, 'sourcePath' | 'extractDirectory' | 'onProgress'>): Promise<V1ArchiveAnalysisResult> {
   const archiveFormat = getDiagnosticPackageFormat(request.sourcePath);
   if (!archiveFormat) throw new Error('仅支持 .tgz、.tgz.temp 或 .zip 格式的诊断包');
-  request.onProgress?.({ progress: 5, message: '正在验证诊断包' });
+  request.onProgress?.({ progress: 5, stage: 'identify-package', message: '正在验证诊断包' });
   await rm(request.extractDirectory, { recursive: true, force: true });
   await mkdir(request.extractDirectory, { recursive: true });
   try {
-    request.onProgress?.({ progress: 15, message: '正在解压诊断包' });
+    request.onProgress?.({ progress: 15, stage: 'identify-package', message: '正在解压诊断包' });
     if (archiveFormat === 'tgz') await tar.x({ file: request.sourcePath, cwd: request.extractDirectory, gzip: true, strict: true });
     else await extractZip(request.sourcePath, { dir: request.extractDirectory });
   } catch (error) {
     throw new Error(`无法解压诊断包：${error instanceof Error ? error.message : String(error)}`);
   }
-  request.onProgress?.({ progress: 35, message: '正在识别系统与存储日志' });
-  const files = await collectV1Sources(request.extractDirectory, (processedFiles, totalFiles) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), message: `正在读取日志（${processedFiles}/${totalFiles}）` }));
+  request.onProgress?.({ progress: 35, stage: 'parse-system-events', message: '正在识别系统与存储日志' });
+  const files = await collectV1Sources(request.extractDirectory, (processedFiles, totalFiles) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), stage: 'parse-system-events', message: `正在读取日志（${processedFiles}/${totalFiles}）` }));
   if (!Object.keys(files).length) throw new Error('无法识别日志包：未找到受支持的系统或存储日志');
-  request.onProgress?.({ progress: 55, message: '正在解析统一事件' });
-  const result = analyzeV1Sources({ sourceName: basename(request.sourcePath), files, onProgress: ({ processedFiles, totalFiles, progress }) => request.onProgress?.({ progress: 55 + Math.round(progress * 0.3), message: `正在解析日志（${processedFiles}/${totalFiles}）` }) });
-  request.onProgress?.({ progress: 85, message: '正在关联诊断结论' });
+  request.onProgress?.({ progress: 55, stage: 'analyze-storage', message: '正在分析存储状态' });
+  const result = analyzeV1Sources({ sourceName: basename(request.sourcePath), files, onProgress: ({ processedFiles, totalFiles, progress }) => request.onProgress?.({ progress: 55 + Math.round(progress * 0.3), stage: 'analyze-storage', message: `正在解析日志（${processedFiles}/${totalFiles}）` }) });
+  request.onProgress?.({ progress: 85, stage: 'aggregate-anomalies', message: '正在聚合异常并关联诊断结论' });
   const browserPath = join(request.extractDirectory, 'analysis-result.html');
   await writeFile(browserPath, renderV1Html(result), 'utf8');
-  request.onProgress?.({ progress: 98, message: '诊断结果已完成' });
+  request.onProgress?.({ progress: 98, stage: 'form-conclusion', message: '正在形成诊断结论' });
   return { result, browserPath };
 }
 

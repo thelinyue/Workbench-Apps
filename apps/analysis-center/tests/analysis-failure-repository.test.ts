@@ -12,7 +12,7 @@ it('保存失败阶段、中文错误和输入元数据，不写入结果表', a
   directories.push(directory);
   const repository = new WorkspaceRepository(join(directory, 'analysis-center.db'));
   repository.upsertPackage({ id: 'package-1', sourcePath: 'fixture.tgz', extractPath: join(directory, 'extract'), displayName: 'fixture.tgz', detectedAt: '2026-08-26T00:00:00Z', status: 'failed', taskIds: ['task-1'], caseId: 'case-1' });
-  repository.upsertTask({ id: 'task-1', packageId: 'package-1', scope: 'comprehensive', status: 'failed', createdAt: '2026-08-26T00:00:00Z', progress: 100, message: '分析失败', errorMessage: '无法解压诊断包' });
+  repository.upsertTask({ id: 'task-1', packageId: 'package-1', scope: 'comprehensive', status: 'failed', createdAt: '2026-08-26T00:00:00Z', progress: 100, stage: 'identify-package', message: '分析失败', errorMessage: '无法解压诊断包' });
 
   repository.saveAnalysisFailure('package-1', 'task-1', '解压', '无法解压诊断包', { sourcePath: 'fixture.tgz' });
   expect(repository.getAnalysisFailure('task-1')).toMatchObject({ packageId: 'package-1', stage: '解压', errorMessage: '无法解压诊断包', inputMetadata: { sourcePath: 'fixture.tgz' } });

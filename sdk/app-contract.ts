@@ -35,6 +35,23 @@ export interface AppWindowSize {
   height: number;
 }
 
+/** backend 请求宿主展示的系统通知；应用身份由 Workbench 运行时绑定。 */
+export interface AppNotificationRequest {
+  title: string;
+  body: string;
+  windowKey?: string;
+  activationPayload?: unknown;
+}
+
+/** 应用 backend 的公开启动上下文。 */
+export interface AppBackendContext {
+  appId: string;
+  dataDirectory: string;
+  manifest: unknown;
+  emit(event: string, payload: unknown): void;
+  showNotification(notification: AppNotificationRequest): void;
+}
+
 /** 应用 renderer 的运行方式；backendEntry 保持可选以支持纯静态 Web 工具。 */
 export type AppRuntimeV1 =
   | { kind: 'web'; rendererEntry: string; icon: string }

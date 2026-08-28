@@ -1,6 +1,7 @@
 export interface MonitorSettings {
   directory?: string;
   enabled: boolean;
+  autoAnalyzeEnabled: boolean;
   scanIntervalMinutes: number;
 }
 
@@ -47,6 +48,10 @@ export function createSettingsActions({
       }
       if (!Number.isInteger(draft.scanIntervalMinutes) || draft.scanIntervalMinutes < 1) {
         reportError('自动扫描间隔至少为 1 分钟。');
+        return;
+      }
+      if (draft.scanIntervalMinutes > 3) {
+        reportError('自动扫描间隔最多为 3 分钟。');
         return;
       }
       try {

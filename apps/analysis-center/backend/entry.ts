@@ -8,13 +8,7 @@ import { LifecycleDeletionService } from './lib/services/lifecycle-deletion-serv
 import { createAnalysisBackendShutdown } from './lib/services/analysis-backend-shutdown';
 import { WorkspaceRepository } from './lib/data/workspace-repository';
 import type { AnalyzerRuleCatalog } from './lib/analysis/log-analyzer';
-
-interface AppBackendContext {
-  appId: string;
-  dataDirectory: string;
-  manifest: unknown;
-  emit(event: string, payload: unknown): void;
-}
+import type { AppBackendContext } from '../../../sdk/app-contract';
 
 interface AppBackend {
   invoke(method: string, payload: unknown): Promise<unknown> | unknown;
@@ -36,8 +30,8 @@ interface PendingDeletion {
 export function createAppBackend(context: AppBackendContext): AppBackend {
   const repository = new WorkspaceRepository(join(context.dataDirectory, 'analysis-center.db'));
   const analysis = new AnalysisCenterService(repository);
-  const tasks = new AnalysisTaskService(repository);
-  const monitor = new MonitorDirectoryService(repository, analysis);
+  const tasks = new AnalysisTaskService(repository, { notify: (notification) => context.showNotification(notification) });
+  const monitor = new MonitorDirectoryService(repository, analysis, tasks);
   const deletion = new LifecycleDeletionService(repository);
   const pendingDeletions = new Map<string, PendingDeletion>();
   const emitChanged = () => context.emit('tasks.changed', { tasks: repository.listTasks() });
@@ -74,7 +68,7 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           context.emit('packages.changed', { packageId: item.id });
           return item;
         }
-        case 'packages.scan': { await monitor.scanNow(); return analysis.listPackages(); }
+        case 'packages.scan': { await monitor.scanExistingNow(); return analysis.listPackages(); }
         case 'analysis.start': {
           const value = readRecord(payload);
           await tasks.enqueue(getPackage(readString(value.packageId)).id, value.scope === 'storage' ? 'storage' : 'comprehensive');
@@ -137,9 +131,10 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
         case 'settings.save': {
           const value = readRecord(payload);
           const directory = value.directory === undefined || value.directory === null ? undefined : readString(value, 'directory');
-          if (typeof value.enabled !== 'boolean') throw new Error('监控目录启用状态必须是布尔值');
-          if (value.enabled && !directory) throw new Error('启用监控前请选择目录');
-          repository.saveMonitorSettings({ directory, enabled: value.enabled, scanIntervalMinutes: readInteger(value, 'scanIntervalMinutes') });
+          const enabled = readBoolean(value, 'enabled');
+          const autoAnalyzeEnabled = readBoolean(value, 'autoAnalyzeEnabled');
+          if (enabled && !directory) throw new Error('启用监控前请选择目录');
+          repository.saveMonitorSettings({ directory, enabled, autoAnalyzeEnabled, scanIntervalMinutes: readInteger(value, 'scanIntervalMinutes') });
           await monitor.reconfigure();
           return undefined;
         }
@@ -171,6 +166,12 @@ function readStringArray(value: unknown, key: string): string[] {
 function readInteger(value: Record<string, unknown>, key: string): number {
   const actual = value[key];
   if (typeof actual !== 'number' || !Number.isInteger(actual)) throw new Error(`应用请求缺少有效整数：${key}`);
+  return actual;
+}
+
+function readBoolean(value: Record<string, unknown>, key: string): boolean {
+  const actual = value[key];
+  if (typeof actual !== 'boolean') throw new Error(`应用请求缺少有效布尔值：${key}`);
   return actual;
 }
 

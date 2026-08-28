@@ -22,7 +22,7 @@ describe('诊断包完整生命周期删除', () => {
     const diagnosticPackage = { id: 'c225bc60-8cf5-4f0d-993f-1a06a547ab46', sourcePath, extractPath, reportPath, displayName: 'device.tgz', detectedAt: new Date().toISOString(), status: 'report-ready' as const, taskIds: ['123e4567-e89b-42d3-a456-426614174000'], caseId: 'case-1' };
     repository.upsertPackage(diagnosticPackage);
     repository.ensureCase(diagnosticPackage.id, diagnosticPackage.caseId);
-    repository.upsertTask({ id: diagnosticPackage.taskIds[0], packageId: diagnosticPackage.id, scope: 'comprehensive', status: 'succeeded', createdAt: new Date().toISOString(), progress: 100, message: '报告已生成' });
+    repository.upsertTask({ id: diagnosticPackage.taskIds[0], packageId: diagnosticPackage.id, scope: 'comprehensive', status: 'succeeded', createdAt: new Date().toISOString(), progress: 100, stage: 'form-conclusion', message: '报告已生成' });
     repository.upsertAnalysisRecord({ id: diagnosticPackage.taskIds[0], packageId: diagnosticPackage.id, taskId: diagnosticPackage.taskIds[0], status: 'succeeded', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     repository.upsertReport(diagnosticPackage.id, reportPath);
     const service = new LifecycleDeletionService(repository);

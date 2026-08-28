@@ -5,8 +5,8 @@
   "description": "诊断包导入、监控扫描、综合分析、存储健康分析和离线报告",
   "publisherId": "thelinyue",
   "version": "2.0.0",
-  "hostApiVersion": "1.0",
-  "minWorkbenchVersion": "0.1.6",
+  "hostApiVersion": "1.1",
+  "minWorkbenchVersion": "0.1.7",
   "window": {
     "defaultSize": { "width": 1200, "height": 800 },
     "minSize": { "width": 800, "height": 560 }
@@ -22,6 +22,7 @@
     "shell.openPath",
     "shell.showItemInFolder",
     "rules.read",
-    "rules.update"
+    "rules.update",
+    "notification.show"
   ]
 }
