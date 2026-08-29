@@ -17,6 +17,11 @@ interface Evidence { id: string; timestamp?: string; timestampPrecision: string;
 interface Diagnosis { id: string; title: string; summary: string; severity: string; confidence: string; affectedResources: string[]; affectedDeviceResources?: string[]; findingIds: string[]; userConclusion?: string; engineerConclusion?: string; }
 interface Result { diagnoses: Diagnosis[]; findings: Finding[]; evidence: Evidence[]; deviceAssessments?: Array<{ resource: string; label?: string; serial?: string; usedFor?: string; smartRiskAttributes: Array<{ id: number; name: string; raw: number }>; ioErrorCount: number; }>; recommendations: Array<{ id: string; priority: number; title: string; reason: string; risk: string }>; metadata: { source: string; missingData: string[] }; }
 interface EvidenceContext { available: boolean; lines: string[]; message?: string; }
+interface PackageDeletionPreview { packageCount: number; extractPaths: string[]; confirmationToken: string; }
+interface PackageRecordDeletionPreview { packageCount: number; taskCount: number; caseCount: number; analysisRecordCount: number; reportRecordCount: number; confirmationToken: string; }
+type PendingPackageDeletion =
+  | { packageId: string; mode: 'lifecycle'; preview: PackageDeletionPreview; trigger: HTMLButtonElement | null }
+  | { packageId: string; mode: 'records'; preview: PackageRecordDeletionPreview; trigger: HTMLButtonElement | null };
 
 const host = new AppHostClient('analysis-center');
 
@@ -172,8 +177,12 @@ export function AnalysisCenterApp() {
 function WorkspaceList({ title, items, emptyText, action, onChanged, onError, failureByPackageId, resultByPackageId, onAnalyze, highlightedPackageId, highlightedRef }: { title: string; items: PackageItem[]; emptyText: string; action: (item: PackageItem) => React.ReactNode; onChanged: () => Promise<void>; onError: (error: unknown) => void; failureByPackageId?: Map<string, string>; resultByPackageId?: Map<string, Result>; onAnalyze?: (packageId: string) => Promise<void>; highlightedPackageId?: string; highlightedRef?: React.MutableRefObject<HTMLElement | null> }) {
   const [openMenuPackageId, setOpenMenuPackageId] = useState<string>();
   const [deletingPackageId, setDeletingPackageId] = useState<string>();
+  const [pendingDeletion, setPendingDeletion] = useState<PendingPackageDeletion>();
+  const [deletionSubmitting, setDeletionSubmitting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const deletionSubmittingRef = useRef(false);
+  deletionSubmittingRef.current = deletionSubmitting;
   useEffect(() => {
     const closeFromOutside = (event: PointerEvent) => { if (openMenuPackageId && isOutsideOverflowMenu(event.target, menuRef.current, triggerRef.current)) setOpenMenuPackageId(undefined); };
     const closeFromEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpenMenuPackageId(undefined); };
@@ -183,21 +192,45 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
   }, [openMenuPackageId]);
   const locate = async (packageId: string, method: 'packages.locate-source' | 'packages.locate-extract') => { const path = await host.invoke<string>(method, { packageId }); await host.invoke('host.showItemInFolder', { path }); };
   const remove = async (packageId: string, mode: 'lifecycle' | 'records') => {
+    const trigger = triggerRef.current;
     setOpenMenuPackageId(undefined);
     setDeletingPackageId(packageId);
     try {
       if (mode === 'records') {
-        const preview = await host.invoke<{ packageCount: number; taskCount: number; caseCount: number; analysisRecordCount: number; reportRecordCount: number; confirmationToken: string }>('packages.delete-record-preview', { packageIds: [packageId] });
-        if (!window.confirm(getPackageRecordDeletionConfirmation(preview))) return;
-        await host.invoke('packages.delete-record', { packageIds: [packageId], confirmationToken: preview.confirmationToken });
+        const preview = await host.invoke<PackageRecordDeletionPreview>('packages.delete-record-preview', { packageIds: [packageId] });
+        setPendingDeletion({ packageId, mode, preview, trigger });
       } else {
-        const preview = await host.invoke<{ packageCount: number; extractPaths: string[]; confirmationToken: string }>('packages.delete-preview', { packageIds: [packageId] });
-        if (!window.confirm(getPackageDeletionConfirmation(preview))) return;
-        await host.invoke('packages.delete', { packageIds: [packageId], confirmationToken: preview.confirmationToken });
+        const preview = await host.invoke<PackageDeletionPreview>('packages.delete-preview', { packageIds: [packageId] });
+        setPendingDeletion({ packageId, mode, preview, trigger });
       }
-      await onChanged();
-    } finally {
+    } catch (error) {
       setDeletingPackageId(undefined);
+      throw error;
+    }
+  };
+  const cancelDeletion = useCallback(() => {
+    if (deletionSubmittingRef.current) return;
+    setPendingDeletion(undefined);
+    setDeletingPackageId(undefined);
+  }, []);
+  const confirmDeletion = async () => {
+    if (!pendingDeletion || deletionSubmitting) return;
+    setDeletionSubmitting(true);
+    try {
+      if (pendingDeletion.mode === 'records') {
+        await host.invoke('packages.delete-record', { packageIds: [pendingDeletion.packageId], confirmationToken: pendingDeletion.preview.confirmationToken });
+      } else {
+        await host.invoke('packages.delete', { packageIds: [pendingDeletion.packageId], confirmationToken: pendingDeletion.preview.confirmationToken });
+      }
+      setPendingDeletion(undefined);
+      setDeletingPackageId(undefined);
+      await onChanged();
+    } catch (error) {
+      setPendingDeletion(undefined);
+      setDeletingPackageId(undefined);
+      onError(error);
+    } finally {
+      setDeletionSubmitting(false);
     }
   };
   return <section className="workspace-section workspace-list"><header className="workspace-section-heading"><h2>{title} <span>{items.length}</span></h2></header>{items.length === 0 ? <div className="workspace-empty"><span>{emptyText}</span></div> : items.map((item) => {
@@ -207,7 +240,19 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
     const active = item.status === 'running' || item.status === 'queued';
     const deleting = deletingPackageId === item.id;
     return <article ref={highlightedPackageId === item.id ? highlightedRef : undefined} tabIndex={highlightedPackageId === item.id ? -1 : undefined} className={`workspace-list-item${highlightedPackageId === item.id ? ' is-highlighted' : ''}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); setOpenMenuPackageId(item.id); }}><PackageStatusIcon tone={getPackageTone(item.status, presentation.severity)} /><div className="workspace-item-copy"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span title={presentation.detail}>{isRecent ? presentation.detail : item.sourcePath}</span></div>{!isRecent && <span className="package-size">{formatFileSize(item.sourceSizeBytes)}</span>}<span className="package-time"><Clock3 size={13} aria-hidden="true" />{formatDetectedAt(item.detectedAt)}</span><div className="card-actions">{action(item)}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{onAnalyze && (item.status === 'report-ready' || item.status === 'failed') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button type="button" role="menuitem" disabled={active || deleting} onClick={() => void remove(item.id, 'records').catch(onError)}>仅删除记录</button><button className="danger" type="button" role="menuitem" disabled={active || deleting} onClick={() => void remove(item.id, 'lifecycle').catch(onError)}>删除诊断包</button></div>}</div></article>;
-  })}</section>;
+  })}{pendingDeletion && <PackageDeletionDialog pending={pendingDeletion} submitting={deletionSubmitting} onCancel={cancelDeletion} onConfirm={() => void confirmDeletion()} />}</section>;
+}
+
+/** 删除前先展示后端预览结果，所有确认和取消路径都留在应用内，避免触发 iframe 原生模态框限制。 */
+function PackageDeletionDialog({ pending, submitting, onCancel, onConfirm }: { pending: PendingPackageDeletion; submitting: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const title = pending.mode === 'records' ? '确认删除记录' : '确认删除诊断包';
+  const message = pending.mode === 'records' ? getPackageRecordDeletionConfirmation(pending.preview) : getPackageDeletionConfirmation(pending.preview);
+  useEffect(() => {
+    if (!dialogRef.current) return;
+    return startDialogLifecycle({ document, scope: dialogRef.current, trigger: pending.trigger ?? { focus: () => undefined }, requestClose: onCancel });
+  }, [onCancel, pending.trigger]);
+  return <div className="package-deletion-backdrop" role="presentation" onMouseDown={onCancel}><section ref={dialogRef} className="package-deletion-dialog" role="dialog" aria-modal="true" aria-labelledby="package-deletion-title" aria-describedby="package-deletion-message" onMouseDown={(event) => event.stopPropagation()}><header><h2 id="package-deletion-title">{title}</h2></header><p id="package-deletion-message" className="package-deletion-message">{message}</p><footer className="dialog-actions"><button type="button" disabled={submitting} onClick={onCancel}>取消</button><button type="button" className="danger-action" disabled={submitting} onClick={onConfirm}>{submitting ? '删除中…' : '确认删除'}</button></footer></section></div>;
 }
 
 function RunningTasks({ tasks, packages, now }: { tasks: TaskItem[]; packages: PackageItem[]; now: number }) { return <section className="workspace-section workspace-list"><header className="workspace-section-heading"><h2>正在分析 <span>{tasks.length}</span></h2></header>{tasks.length === 0 ? <div className="workspace-empty"><span>当前没有运行中的分析任务</span></div> : tasks.map((task) => { const queued = task.status === 'queued'; const elapsed = formatElapsed(queued ? task.createdAt : task.startedAt, now); const detail = queued ? `排队中，前方还有 ${getQueuePosition(task.id, tasks)} 个任务 · ${elapsed.replace('已用时', '已等待')}` : `${task.message} · ${elapsed}`; return <article className="running-task" key={task.id}><div className="running-summary"><LoaderCircle className={queued ? '' : 'is-spinning'} size={20} aria-hidden="true" /><div><strong>{packages.find((item) => item.id === task.packageId)?.displayName ?? '诊断包'}</strong><span>{detail}</span></div><div className="task-progress"><progress value={task.progress} max={100}>{task.progress}%</progress><strong>{task.progress}%</strong></div></div><ol className="stage-progress" aria-label="分析阶段">{getAnalysisStageItems(task.stage).map((stage) => <li className={`state-${stage.state}`} key={stage.id}><span aria-hidden="true">{stage.state === 'complete' ? '✓' : ''}</span>{stage.label}</li>)}</ol></article>; })}</section>; }

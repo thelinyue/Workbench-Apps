@@ -52,7 +52,7 @@ describe('分析中心 backend Worker', () => {
     }
   });
 
-  it('仅删除记录的 IPC 保留原始文件，并拒绝物理删除令牌混用', async () => {
+  it('源文件已不存在时，仍可通过 IPC 仅删除记录，并拒绝物理删除令牌混用', async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-record-delete-'));
     directories.push(dataDirectory);
     const sourcePath = join(dataDirectory, 'device.tgz');
@@ -61,13 +61,34 @@ describe('分析中心 backend Worker', () => {
 
     try {
       const diagnosticPackage = await backend.invoke('packages.import', { sourcePath }) as { id: string };
+      await rm(sourcePath);
       const recordPreview = await backend.invoke('packages.delete-record-preview', { packageIds: [diagnosticPackage.id] }) as { confirmationToken: string };
       await expect(backend.invoke('packages.delete', { packageIds: [diagnosticPackage.id], confirmationToken: recordPreview.confirmationToken })).rejects.toThrow('操作类型不匹配');
 
       const validPreview = await backend.invoke('packages.delete-record-preview', { packageIds: [diagnosticPackage.id] }) as { confirmationToken: string };
       await backend.invoke('packages.delete-record', { packageIds: [diagnosticPackage.id], confirmationToken: validPreview.confirmationToken });
 
-      await expect(access(sourcePath)).resolves.toBeUndefined();
+      await expect(access(sourcePath)).rejects.toThrow();
+      await expect(backend.invoke('packages.list', null)).resolves.toEqual([]);
+    } finally {
+      await backend.close();
+    }
+  });
+
+  it('源文件已不存在时，仍可通过 IPC 删除诊断包并清理记录', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-lifecycle-delete-'));
+    directories.push(dataDirectory);
+    const sourcePath = join(dataDirectory, 'device.tgz');
+    await writeFile(sourcePath, 'archive-placeholder');
+    const backend = createAppBackend({ appId: 'analysis-center', dataDirectory, manifest: {}, emit: () => undefined, showNotification: () => undefined });
+
+    try {
+      const diagnosticPackage = await backend.invoke('packages.import', { sourcePath }) as { id: string };
+      await rm(sourcePath);
+      const preview = await backend.invoke('packages.delete-preview', { packageIds: [diagnosticPackage.id] }) as { confirmationToken: string };
+
+      await backend.invoke('packages.delete', { packageIds: [diagnosticPackage.id], confirmationToken: preview.confirmationToken });
+
       await expect(backend.invoke('packages.list', null)).resolves.toEqual([]);
     } finally {
       await backend.close();

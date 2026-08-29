@@ -22,4 +22,11 @@ describe('分析任务失败提示', () => {
     expect(source).toContain("packages.delete-record");
     expect(source).toContain('catch(onError)');
   });
+
+  it('删除确认使用应用内弹窗，不依赖 iframe 禁用的原生模态框', () => {
+    expect(source).not.toContain('window.confirm');
+    expect(source).toContain('role="dialog"');
+    expect(source).toContain('删除诊断包');
+    expect(source).toContain('仅删除记录');
+  });
 });
