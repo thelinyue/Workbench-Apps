@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import * as tar from 'tar';
 import extractZip from 'extract-zip';
+import { assertDiagnosticArchiveIntegrity } from './archive-integrity';
 import { getDiagnosticPackageFormat } from '../domain/diagnostic-package';
 import {
   analyzeExtractedDirectory,
@@ -46,6 +47,7 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
   const archiveFormat = getDiagnosticPackageFormat(request.sourcePath);
   if (!archiveFormat) throw new Error('仅支持 .tgz、.tgz.temp 或 .zip 格式的诊断包');
   request.onProgress?.({ progress: 5, stage: 'identify-package', message: '正在验证诊断包' });
+  if (archiveFormat === 'tgz') await assertDiagnosticArchiveIntegrity(request.sourcePath);
   await prepareExtractDirectory(request.extractDirectory);
   try {
     request.onProgress?.({ progress: 15, stage: 'identify-package', message: '正在解压诊断包' });
@@ -127,6 +129,8 @@ export async function runArchiveAnalysis(request: ArchiveAnalysisRequest): Promi
   }
 
   request.onProgress?.({ progress: 5, message: '正在准备诊断包' });
+
+  if (archiveFormat === 'tgz') await assertDiagnosticArchiveIntegrity(request.sourcePath);
 
   await prepareExtractDirectory(request.extractDirectory);
 

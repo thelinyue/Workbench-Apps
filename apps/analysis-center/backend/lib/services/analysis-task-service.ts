@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import type { AnalyzerRuleCatalog } from '../analysis/log-analyzer';
+import { assertDiagnosticArchiveIntegrity } from '../analysis/archive-integrity';
+import { getDiagnosticPackageFormat } from '../domain/diagnostic-package';
 import type { AnalysisTaskRecord, AnalysisTaskStage, WorkspaceRepository } from '../data/workspace-repository';
 import type { AnalysisResult } from '../analysis-v1/pipeline';
 
@@ -56,6 +58,7 @@ export class AnalysisTaskService extends EventEmitter {
     const diagnosticPackage = this.repository.getPackage(packageId);
     if (!diagnosticPackage) throw new Error('找不到要分析的诊断包');
     if (diagnosticPackage.status === 'running' || diagnosticPackage.status === 'queued') throw new Error('该诊断包已经在分析队列中');
+    if (getDiagnosticPackageFormat(diagnosticPackage.sourcePath) === 'tgz') await assertDiagnosticArchiveIntegrity(diagnosticPackage.sourcePath);
     const task: AnalysisTaskRecord = { id: randomUUID(), packageId, scope, status: 'queued', createdAt: new Date().toISOString(), progress: 0, stage: 'identify-package', message: scope === 'storage' ? '等待存储健康分析' : '等待综合分析' };
     diagnosticPackage.status = 'queued';
     diagnosticPackage.taskIds = [...diagnosticPackage.taskIds, task.id];

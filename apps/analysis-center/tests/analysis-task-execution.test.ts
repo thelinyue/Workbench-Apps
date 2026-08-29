@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as tar from 'tar';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AnalysisResult } from '../backend/lib/analysis-v1/pipeline';
 import { WorkspaceRepository } from '../backend/lib/data/workspace-repository';
@@ -16,8 +17,8 @@ describe('分析任务单线程执行', () => {
     const root = await mkdtemp(join(tmpdir(), 'analysis-task-execution-'));
     directories.push(root);
     const repository = new WorkspaceRepository(join(root, 'analysis-center.db'));
-    repository.upsertPackage(packageRecord('package-fails'));
-    repository.upsertPackage(packageRecord('package-succeeds'));
+    repository.upsertPackage(packageRecord('package-fails', await createArchive(root, 'package-fails')));
+    repository.upsertPackage(packageRecord('package-succeeds', await createArchive(root, 'package-succeeds')));
     const workers: FakeAnalysisWorker[] = [];
     const notifications: unknown[] = [];
     const service = new AnalysisTaskService(repository, {
@@ -66,10 +67,19 @@ class FakeAnalysisWorker extends EventEmitter implements AnalysisWorker {
   public terminate(): Promise<number> { return Promise.resolve(0); }
 }
 
-function packageRecord(id: string): DiagnosticPackage {
+async function createArchive(root: string, id: string): Promise<string> {
+  const sourceDirectory = join(root, `${id}-source`);
+  await mkdir(sourceDirectory);
+  await writeFile(join(sourceDirectory, 'placeholder.log'), 'placeholder');
+  const archivePath = join(root, `${id}.tgz`);
+  await tar.c({ gzip: true, cwd: sourceDirectory, file: archivePath }, ['placeholder.log']);
+  return archivePath;
+}
+
+function packageRecord(id: string, sourcePath: string): DiagnosticPackage {
   return {
     id,
-    sourcePath: `D:/Inbox/${id}.tgz`,
+    sourcePath,
     extractPath: `D:/data/${id}`,
     displayName: `${id}.tgz`,
     sourceSizeBytes: 1024,

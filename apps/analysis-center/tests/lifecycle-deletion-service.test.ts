@@ -40,4 +40,37 @@ describe('诊断包完整生命周期删除', () => {
     expect(repository.listTasks()).toEqual([]);
     repository.close();
   });
+
+  it('仅删除记录时保留原始包、解压目录和报告文件', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'workbench-record-delete-'));
+    directories.push(root);
+    const sourcePath = join(root, 'device.tgz');
+    const extractPath = join(root, 'device');
+    const reportPath = join(extractPath, 'Report', 'index.html');
+    await writeFile(sourcePath, 'archive');
+    await mkdir(join(extractPath, 'Report'), { recursive: true });
+    await writeFile(reportPath, '<html>report</html>');
+    const repository = new WorkspaceRepository(join(root, 'workbench.db'));
+    const diagnosticPackage = { id: 'record-only', sourcePath, extractPath, reportPath, displayName: 'device.tgz', detectedAt: new Date().toISOString(), status: 'failed' as const, taskIds: ['task-record-only'], caseId: 'case-record-only' };
+    repository.upsertPackage(diagnosticPackage);
+    repository.ensureCase(diagnosticPackage.id, diagnosticPackage.caseId);
+    repository.upsertTask({ id: diagnosticPackage.taskIds[0], packageId: diagnosticPackage.id, scope: 'comprehensive', status: 'failed', createdAt: new Date().toISOString(), progress: 100, stage: 'identify-package', message: '分析失败', errorMessage: '分析失败' });
+    repository.upsertAnalysisRecord({ id: diagnosticPackage.taskIds[0], packageId: diagnosticPackage.id, taskId: diagnosticPackage.taskIds[0], status: 'failed', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    repository.saveAnalysisFailure(diagnosticPackage.id, diagnosticPackage.taskIds[0], 'identify-package', '分析失败', { sourcePath });
+    repository.upsertReport(diagnosticPackage.id, reportPath);
+    const service = new LifecycleDeletionService(repository);
+
+    try {
+      await service.deleteRecords([diagnosticPackage]);
+
+      expect(repository.listPackages()).toEqual([]);
+      expect(repository.listTasks()).toEqual([]);
+      expect(repository.getAnalysisFailure(diagnosticPackage.taskIds[0])).toBeUndefined();
+      await expect(access(sourcePath)).resolves.toBeUndefined();
+      await expect(access(extractPath)).resolves.toBeUndefined();
+      await expect(access(reportPath)).resolves.toBeUndefined();
+    } finally {
+      repository.close();
+    }
+  });
 });

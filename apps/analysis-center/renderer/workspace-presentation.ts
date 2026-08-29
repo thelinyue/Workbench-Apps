@@ -68,3 +68,8 @@ export function getPackageDeletionConfirmation(preview: { packageCount: number; 
   const paths = preview.extractPaths.length > 0 ? preview.extractPaths.map((path) => `- ${path}`).join('\n') : '- 无';
   return `将永久删除 ${preview.packageCount} 个原诊断包、关联解压目录及目录内全部内容，同时移除所有分析记录，是否继续？\n\n将删除的解压目录：\n${paths}`;
 }
+
+/** 仅删除记录的确认文案必须明确保证用户文件和报告不会被触碰。 */
+export function getPackageRecordDeletionConfirmation(preview: { packageCount: number; taskCount: number; caseCount: number; analysisRecordCount: number; reportRecordCount: number }): string {
+  return `仅删除 ${preview.packageCount} 个诊断包的记录、任务和分析结果，不删除原始诊断包、解压目录或报告文件，是否继续？\n\n将删除记录：任务 ${preview.taskCount} 条、案例 ${preview.caseCount} 个、分析记录 ${preview.analysisRecordCount} 条、报告索引 ${preview.reportRecordCount} 条。`;
+}

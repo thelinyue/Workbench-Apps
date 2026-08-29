@@ -8,7 +8,7 @@ import { createSettingsActions, type MonitorSettings } from './settings-actions'
 import { formatElapsed, getQueuePosition, isOutsideOverflowMenu } from './task-presentation';
 import { startDialogLifecycle } from './dialog-lifecycle';
 import { openSysinfoReport } from './sysinfo-report-action';
-import { formatFileSize, getAnalysisStageItems, getNotificationActivation, getPackageDeletionConfirmation, getPackageTone, getRecentAnalysisPresentation, getWorkspaceGroups, type AnalysisTaskStage } from './workspace-presentation';
+import { formatFileSize, getAnalysisStageItems, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPresentation, getWorkspaceGroups, type AnalysisTaskStage } from './workspace-presentation';
 
 interface PackageItem { id: string; displayName: string; sourcePath: string; sourceSizeBytes?: number; detectedAt: string; status: 'pending' | 'queued' | 'running' | 'report-ready' | 'failed' | 'cancelled'; reportPath?: string; }
 interface TaskItem { id: string; packageId: string; status: string; createdAt: string; startedAt?: string; progress: number; stage: AnalysisTaskStage; message: string; errorMessage?: string; }
@@ -159,9 +159,9 @@ export function AnalysisCenterApp() {
     </section>
     {monitorStatus.warning && <div className="monitor-warning" role="alert">{monitorStatus.warning}</div>}
     {message && <div className="message" role="alert">{message}</div>}
-    <WorkspaceList title="待分析" items={pending} emptyText="当前没有待分析诊断包" onChanged={load} action={(item) => <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />开始分析</button>} />
+    <WorkspaceList title="待分析" items={pending} emptyText="当前没有待分析诊断包" onChanged={load} onError={showError} action={(item) => <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />开始分析</button>} />
     <RunningTasks tasks={running} packages={packages} now={now} />
-    <WorkspaceList title="最近分析" items={recent} emptyText="暂无已完成或失败的分析" onChanged={load} failureByPackageId={failureByPackageId} resultByPackageId={resultByPackageId} onAnalyze={analyze} highlightedPackageId={highlightedPackageId} highlightedRef={highlightedRef} action={(item) => item.status === 'report-ready' ? <button className="secondary-action" onClick={() => void openResult(item.id).catch(showError)}>查看结果</button> : <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>} />
+    <WorkspaceList title="最近分析" items={recent} emptyText="暂无已完成或失败的分析" onChanged={load} onError={showError} failureByPackageId={failureByPackageId} resultByPackageId={resultByPackageId} onAnalyze={analyze} highlightedPackageId={highlightedPackageId} highlightedRef={highlightedRef} action={(item) => item.status === 'report-ready' ? <button className="secondary-action" onClick={() => void openResult(item.id).catch(showError)}>查看结果</button> : <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>} />
     <section className="workspace-dropzone"><FolderOpen size={18} aria-hidden="true" /><span>不在监控目录中？</span><button className="text-action" onClick={() => void importPackages()}>手动选择诊断包</button><small>导入后进入待分析</small></section>
     {dragging && <div className="drop-overlay" role="presentation"><div className="drop-target"><span className="drop-icon"><Upload size={34} aria-hidden="true" /></span><strong>松开以导入诊断包</strong><p>支持 .tgz · .tgz.temp · .zip</p><small>导入后将加入待分析</small></div></div>}
     {settingsDialog}
@@ -169,8 +169,9 @@ export function AnalysisCenterApp() {
 }
 
 /** 诊断包列表复用同一行结构，避免各个状态分区的文件信息呈现出现偏差。 */
-function WorkspaceList({ title, items, emptyText, action, onChanged, failureByPackageId, resultByPackageId, onAnalyze, highlightedPackageId, highlightedRef }: { title: string; items: PackageItem[]; emptyText: string; action: (item: PackageItem) => React.ReactNode; onChanged: () => Promise<void>; failureByPackageId?: Map<string, string>; resultByPackageId?: Map<string, Result>; onAnalyze?: (packageId: string) => Promise<void>; highlightedPackageId?: string; highlightedRef?: React.MutableRefObject<HTMLElement | null> }) {
+function WorkspaceList({ title, items, emptyText, action, onChanged, onError, failureByPackageId, resultByPackageId, onAnalyze, highlightedPackageId, highlightedRef }: { title: string; items: PackageItem[]; emptyText: string; action: (item: PackageItem) => React.ReactNode; onChanged: () => Promise<void>; onError: (error: unknown) => void; failureByPackageId?: Map<string, string>; resultByPackageId?: Map<string, Result>; onAnalyze?: (packageId: string) => Promise<void>; highlightedPackageId?: string; highlightedRef?: React.MutableRefObject<HTMLElement | null> }) {
   const [openMenuPackageId, setOpenMenuPackageId] = useState<string>();
+  const [deletingPackageId, setDeletingPackageId] = useState<string>();
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -181,12 +182,31 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, failureByPa
     return () => { document.removeEventListener('pointerdown', closeFromOutside); document.removeEventListener('keydown', closeFromEscape); };
   }, [openMenuPackageId]);
   const locate = async (packageId: string, method: 'packages.locate-source' | 'packages.locate-extract') => { const path = await host.invoke<string>(method, { packageId }); await host.invoke('host.showItemInFolder', { path }); };
-  const remove = async (packageId: string) => { const preview = await host.invoke<{ packageCount: number; extractPaths: string[]; confirmationToken: string }>('packages.delete-preview', { packageIds: [packageId] }); if (!window.confirm(getPackageDeletionConfirmation(preview))) return; await host.invoke('packages.delete', { packageIds: [packageId], confirmationToken: preview.confirmationToken }); await onChanged(); };
+  const remove = async (packageId: string, mode: 'lifecycle' | 'records') => {
+    setOpenMenuPackageId(undefined);
+    setDeletingPackageId(packageId);
+    try {
+      if (mode === 'records') {
+        const preview = await host.invoke<{ packageCount: number; taskCount: number; caseCount: number; analysisRecordCount: number; reportRecordCount: number; confirmationToken: string }>('packages.delete-record-preview', { packageIds: [packageId] });
+        if (!window.confirm(getPackageRecordDeletionConfirmation(preview))) return;
+        await host.invoke('packages.delete-record', { packageIds: [packageId], confirmationToken: preview.confirmationToken });
+      } else {
+        const preview = await host.invoke<{ packageCount: number; extractPaths: string[]; confirmationToken: string }>('packages.delete-preview', { packageIds: [packageId] });
+        if (!window.confirm(getPackageDeletionConfirmation(preview))) return;
+        await host.invoke('packages.delete', { packageIds: [packageId], confirmationToken: preview.confirmationToken });
+      }
+      await onChanged();
+    } finally {
+      setDeletingPackageId(undefined);
+    }
+  };
   return <section className="workspace-section workspace-list"><header className="workspace-section-heading"><h2>{title} <span>{items.length}</span></h2></header>{items.length === 0 ? <div className="workspace-empty"><span>{emptyText}</span></div> : items.map((item) => {
     const analysisResult = resultByPackageId?.get(item.id);
     const isRecent = item.status === 'report-ready' || item.status === 'failed';
     const presentation = getRecentAnalysisPresentation({ status: item.status, displayName: item.displayName, result: analysisResult, failureMessage: failureByPackageId?.get(item.id) });
-    return <article ref={highlightedPackageId === item.id ? highlightedRef : undefined} tabIndex={highlightedPackageId === item.id ? -1 : undefined} className={`workspace-list-item${highlightedPackageId === item.id ? ' is-highlighted' : ''}`} key={item.id} onContextMenu={() => setOpenMenuPackageId(item.id)}><PackageStatusIcon tone={getPackageTone(item.status, presentation.severity)} /><div className="workspace-item-copy"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span title={presentation.detail}>{isRecent ? presentation.detail : item.sourcePath}</span></div>{!isRecent && <span className="package-size">{formatFileSize(item.sourceSizeBytes)}</span>}<span className="package-time"><Clock3 size={13} aria-hidden="true" />{formatDetectedAt(item.detectedAt)}</span><div className="card-actions">{action(item)}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{onAnalyze && (item.status === 'report-ready' || item.status === 'failed') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button className="danger" type="button" role="menuitem" disabled={item.status === 'running' || item.status === 'queued'} onClick={() => void remove(item.id)}>删除诊断包</button></div>}</div></article>;
+    const active = item.status === 'running' || item.status === 'queued';
+    const deleting = deletingPackageId === item.id;
+    return <article ref={highlightedPackageId === item.id ? highlightedRef : undefined} tabIndex={highlightedPackageId === item.id ? -1 : undefined} className={`workspace-list-item${highlightedPackageId === item.id ? ' is-highlighted' : ''}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); setOpenMenuPackageId(item.id); }}><PackageStatusIcon tone={getPackageTone(item.status, presentation.severity)} /><div className="workspace-item-copy"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span title={presentation.detail}>{isRecent ? presentation.detail : item.sourcePath}</span></div>{!isRecent && <span className="package-size">{formatFileSize(item.sourceSizeBytes)}</span>}<span className="package-time"><Clock3 size={13} aria-hidden="true" />{formatDetectedAt(item.detectedAt)}</span><div className="card-actions">{action(item)}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{onAnalyze && (item.status === 'report-ready' || item.status === 'failed') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button type="button" role="menuitem" disabled={active || deleting} onClick={() => void remove(item.id, 'records').catch(onError)}>仅删除记录</button><button className="danger" type="button" role="menuitem" disabled={active || deleting} onClick={() => void remove(item.id, 'lifecycle').catch(onError)}>删除诊断包</button></div>}</div></article>;
   })}</section>;
 }
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -47,6 +47,28 @@ describe('分析中心 backend Worker', () => {
       await expect(readFile(reportPath, 'utf8')).resolves.toContain('Trusted device');
       await expect(readFile(reportPath, 'utf8')).resolves.not.toContain('Forged device');
       await expect(backend.invoke('results.sysinfo-report-path', { packageId: 'missing-package' })).rejects.toThrow('找不到指定的诊断包');
+    } finally {
+      await backend.close();
+    }
+  });
+
+  it('仅删除记录的 IPC 保留原始文件，并拒绝物理删除令牌混用', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-record-delete-'));
+    directories.push(dataDirectory);
+    const sourcePath = join(dataDirectory, 'device.tgz');
+    await writeFile(sourcePath, 'archive-placeholder', 'utf8');
+    const backend = createAppBackend({ appId: 'analysis-center', dataDirectory, manifest: {}, emit: () => undefined, showNotification: () => undefined });
+
+    try {
+      const diagnosticPackage = await backend.invoke('packages.import', { sourcePath }) as { id: string };
+      const recordPreview = await backend.invoke('packages.delete-record-preview', { packageIds: [diagnosticPackage.id] }) as { confirmationToken: string };
+      await expect(backend.invoke('packages.delete', { packageIds: [diagnosticPackage.id], confirmationToken: recordPreview.confirmationToken })).rejects.toThrow('操作类型不匹配');
+
+      const validPreview = await backend.invoke('packages.delete-record-preview', { packageIds: [diagnosticPackage.id] }) as { confirmationToken: string };
+      await backend.invoke('packages.delete-record', { packageIds: [diagnosticPackage.id], confirmationToken: validPreview.confirmationToken });
+
+      await expect(access(sourcePath)).resolves.toBeUndefined();
+      await expect(backend.invoke('packages.list', null)).resolves.toEqual([]);
     } finally {
       await backend.close();
     }

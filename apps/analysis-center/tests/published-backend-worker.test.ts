@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -25,6 +25,11 @@ describe('发布版分析 Worker', () => {
     const manifest = JSON.parse(await readFile(join(applicationRoot, 'manifest.json'), 'utf8')) as { version: string };
     const packageRoot = join(root, 'package');
     await extractZip(join(applicationRoot, 'dist', `analysis-center-v${manifest.version}.zip`), { dir: packageRoot });
+    const packageEntries = await readdir(packageRoot, { recursive: true });
+    expect(packageEntries.some((entry) => entry.split(/[\\/]/).includes('node_modules'))).toBe(false);
+    const publishedWorker = await readFile(join(packageRoot, 'backend', 'analysis-worker.js'), 'utf8');
+    expect(publishedWorker).not.toMatch(/(?:from|import)\s*["']tar["']/);
+    expect(publishedWorker).not.toMatch(/require\(\s*["']tar["']\s*\)/);
     const sourceDirectory = join(root, 'source');
     const archivePath = join(root, 'device.tgz');
     const dataDirectory = join(root, 'data');

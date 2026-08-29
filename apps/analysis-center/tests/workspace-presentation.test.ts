@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatFileSize, getAnalysisStageItems, getNotificationActivation, getPackageDeletionConfirmation, getPackageTone, getRecentAnalysisPresentation, getWorkspaceGroups } from '../renderer/workspace-presentation';
+import { formatFileSize, getAnalysisStageItems, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPresentation, getWorkspaceGroups } from '../renderer/workspace-presentation';
 
 describe('分析中心工作区呈现', () => {
   it('把成功和失败统一放入最近分析，待分析与活动任务保持独立', () => {
@@ -83,5 +83,12 @@ describe('分析中心工作区呈现', () => {
 
     expect(message).toContain('原诊断包、关联解压目录及目录内全部内容');
     expect(message).toContain('D:/Inbox/device');
+  });
+
+  it('仅删除记录的确认明确保证原始包、解压目录和报告文件保留', () => {
+    const message = getPackageRecordDeletionConfirmation({ packageCount: 1, taskCount: 2, caseCount: 1, analysisRecordCount: 2, reportRecordCount: 1 });
+
+    expect(message).toContain('不删除原始诊断包、解压目录或报告文件');
+    expect(message).toContain('任务 2 条');
   });
 });

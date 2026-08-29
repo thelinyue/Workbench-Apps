@@ -15,6 +15,14 @@ export interface LifecycleDeletionPreview {
   reportRecordCount: number;
 }
 
+export interface RecordDeletionPreview {
+  packageCount: number;
+  taskCount: number;
+  caseCount: number;
+  analysisRecordCount: number;
+  reportRecordCount: number;
+}
+
 /**
  * 诊断包生命周期删除服务。
  *
@@ -30,6 +38,12 @@ export class LifecycleDeletionService {
     return { packageCount: plan.packageIds.length, taskCount: plan.taskIds.length, ...plan, estimatedBytes, ...this.repository.countLifecycleRecords(plan.packageIds) };
   }
 
+  /** 仅删除记录的预览只统计数据库影响范围，绝不计算或操作磁盘文件。 */
+  public previewRecords(packages: DiagnosticPackage[]): RecordDeletionPreview {
+    const plan = buildLifecycleDeletionPlan(packages);
+    return { packageCount: plan.packageIds.length, taskCount: plan.taskIds.length, ...this.repository.countLifecycleRecords(plan.packageIds) };
+  }
+
   public async delete(packages: DiagnosticPackage[]): Promise<void> {
     const plan = buildLifecycleDeletionPlan(packages);
     for (const sourcePath of plan.sourcePaths) await rm(sourcePath, { force: true });
@@ -37,6 +51,12 @@ export class LifecycleDeletionService {
     // reportPath 位于 extractPath 内；单独删除只覆盖未来报告路径不在解压目录时的兼容情况。
     for (const reportPath of plan.reportPaths) await rm(reportPath, { force: true });
     this.repository.deleteLifecycle(plan.packageIds);
+  }
+
+  /** 仅删除数据库记录，和永久删除共用活动任务保护，但不触碰任何用户文件。 */
+  public deleteRecords(packages: DiagnosticPackage[]): void {
+    const plan = buildLifecycleDeletionPlan(packages);
+    this.repository.deletePackageRecords(plan.packageIds);
   }
 }
 

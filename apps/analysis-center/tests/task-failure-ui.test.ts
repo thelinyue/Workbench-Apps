@@ -14,4 +14,12 @@ describe('分析任务失败提示', () => {
     expect(source).toContain('failureByPackageId?.get(item.id)');
     expect(source).toContain('errorMessage');
   });
+
+  it('右键菜单支持仅删除记录，并捕获删除错误', () => {
+    expect(source).toContain('event.preventDefault()');
+    expect(source).toContain('仅删除记录');
+    expect(source).toContain("packages.delete-record-preview");
+    expect(source).toContain("packages.delete-record");
+    expect(source).toContain('catch(onError)');
+  });
 });

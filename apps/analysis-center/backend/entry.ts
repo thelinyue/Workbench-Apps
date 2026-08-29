@@ -19,6 +19,7 @@ interface AppBackend {
 interface PendingDeletion {
   packageIds: string[];
   expiresAt: number;
+  kind: 'lifecycle' | 'records';
 }
 
 /**
@@ -115,17 +116,26 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           const packages = packageIds.map(getPackage);
           const preview = await deletion.preview(packages);
           const confirmationToken = randomUUID();
-          pendingDeletions.set(confirmationToken, { packageIds, expiresAt: Date.now() + 5 * 60_000 });
+          pendingDeletions.set(confirmationToken, { packageIds, expiresAt: Date.now() + 5 * 60_000, kind: 'lifecycle' });
+          return { ...preview, confirmationToken };
+        }
+        case 'packages.delete-record-preview': {
+          const packageIds = readStringArray(payload, 'packageIds');
+          const packages = packageIds.map(getPackage);
+          const preview = deletion.previewRecords(packages);
+          const confirmationToken = randomUUID();
+          pendingDeletions.set(confirmationToken, { packageIds, expiresAt: Date.now() + 5 * 60_000, kind: 'records' });
           return { ...preview, confirmationToken };
         }
         case 'packages.delete': {
-          const value = readRecord(payload);
-          const token = readString(value.confirmationToken);
-          const confirmation = pendingDeletions.get(token);
-          pendingDeletions.delete(token);
-          const packageIds = readStringArray(value, 'packageIds');
-          if (!confirmation || confirmation.expiresAt < Date.now() || confirmation.packageIds.join('\u0000') !== packageIds.join('\u0000')) throw new Error('删除确认已失效，请重新查看删除清单后确认');
+          const packageIds = consumeDeletionConfirmation(pendingDeletions, payload, 'lifecycle');
           await deletion.delete(packageIds.map(getPackage));
+          context.emit('packages.changed', { packageIds });
+          return undefined;
+        }
+        case 'packages.delete-record': {
+          const packageIds = consumeDeletionConfirmation(pendingDeletions, payload, 'records');
+          deletion.deleteRecords(packageIds.map(getPackage));
           context.emit('packages.changed', { packageIds });
           return undefined;
         }
@@ -163,6 +173,16 @@ function readStringArray(value: unknown, key: string): string[] {
   const actual = readRecord(value)[key];
   if (!Array.isArray(actual) || actual.some((item) => typeof item !== 'string' || !item.trim())) throw new Error(`应用请求缺少有效数组：${key}`);
   return actual;
+}
+
+function consumeDeletionConfirmation(pendingDeletions: Map<string, PendingDeletion>, payload: unknown, kind: PendingDeletion['kind']): string[] {
+  const value = readRecord(payload);
+  const token = readString(value.confirmationToken);
+  const confirmation = pendingDeletions.get(token);
+  pendingDeletions.delete(token);
+  const packageIds = readStringArray(value, 'packageIds');
+  if (!confirmation || confirmation.kind !== kind || confirmation.expiresAt < Date.now() || confirmation.packageIds.join('\u0000') !== packageIds.join('\u0000')) throw new Error('删除确认已失效或操作类型不匹配，请重新查看删除清单后确认');
+  return packageIds;
 }
 
 /** 设置数值必须在进入数据层前完成整数校验，避免非开发者面对 SQLite 的底层类型错误。 */

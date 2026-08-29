@@ -203,6 +203,20 @@ export class WorkspaceRepository {
     } catch (error) { this.database.exec('ROLLBACK;'); throw error; }
   }
 
+  /** 仅删除诊断包及其数据库记录，原始包、解压目录和报告文件全部保留。 */
+  public deletePackageRecords(packageIds: string[]): void {
+    if (packageIds.length === 0) return;
+    const placeholders = packageIds.map(() => '?').join(', ');
+    this.database.exec('BEGIN;');
+    try {
+      for (const table of ['analysis_failures', 'analysis_results', 'analysis_records', 'report_index', 'analysis_tasks', 'analysis_cases']) {
+        this.database.prepare(`DELETE FROM ${table} WHERE package_id IN (${placeholders})`).run(...packageIds);
+      }
+      this.database.prepare(`DELETE FROM diagnostic_packages WHERE id IN (${placeholders})`).run(...packageIds);
+      this.database.exec('COMMIT;');
+    } catch (error) { this.database.exec('ROLLBACK;'); throw error; }
+  }
+
   private deleteCompletedTasks(taskIds?: string[]): number {
     const statusPlaceholders = COMPLETED_TASK_STATUSES.map(() => '?').join(', ');
     const taskFilter = taskIds ? `id IN (${taskIds.map(() => '?').join(', ')}) AND ` : '';

@@ -156,7 +156,7 @@ class FakeRepository {
 }
 
 function packageRecord(id: string, status: DiagnosticPackage['status'], taskIds: string[]): DiagnosticPackage {
-  return { id, sourcePath: `D:/Inbox/${id}.tgz`, extractPath: `D:/data/${id}`, displayName: `${id}.tgz`, detectedAt: '2026-08-28T00:00:00.000Z', status, taskIds, caseId: `case-${id}` };
+  return { id, sourcePath: `D:/Inbox/${id}.zip`, extractPath: `D:/data/${id}`, displayName: `${id}.zip`, detectedAt: '2026-08-28T00:00:00.000Z', status, taskIds, caseId: `case-${id}` };
 }
 
 function taskRecord(id: string, packageId: string, status: AnalysisTaskRecord['status']): AnalysisTaskRecord {
