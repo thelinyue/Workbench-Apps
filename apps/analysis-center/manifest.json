@@ -4,7 +4,7 @@
   "name": "分析中心",
   "description": "诊断包导入、监控扫描、综合分析、存储健康分析和离线报告",
   "publisherId": "thelinyue",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "hostApiVersion": "1.1",
   "minWorkbenchVersion": "0.1.7",
   "window": {

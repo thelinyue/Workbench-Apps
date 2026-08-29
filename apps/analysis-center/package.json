@@ -1,6 +1,6 @@
 {
   "name": "@hephaestus-workbench/analysis-center",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "description": "Hephaestus 工作台分析中心独立应用包",

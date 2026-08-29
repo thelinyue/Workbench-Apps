@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import extractZip from 'extract-zip';
 import * as tar from 'tar';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -21,6 +22,9 @@ describe('发布版分析 Worker', () => {
     await executeFile(process.execPath, ['tools/build-analysis-center.mjs'], { cwd: repositoryRoot });
     const root = await mkdtemp(join(tmpdir(), 'analysis-center-published-worker-'));
     directories.push(root);
+    const manifest = JSON.parse(await readFile(join(applicationRoot, 'manifest.json'), 'utf8')) as { version: string };
+    const packageRoot = join(root, 'package');
+    await extractZip(join(applicationRoot, 'dist', `analysis-center-v${manifest.version}.zip`), { dir: packageRoot });
     const sourceDirectory = join(root, 'source');
     const archivePath = join(root, 'device.tgz');
     const dataDirectory = join(root, 'data');
@@ -30,7 +34,7 @@ describe('发布版分析 Worker', () => {
 
     const runnerPath = join(root, 'run-published-analysis.mjs');
     await writeFile(runnerPath, createPublishedRunner({
-      backendEntryUrl: pathToFileURL(join(applicationRoot, 'dist', 'backend', 'entry.js')).href,
+      backendEntryUrl: pathToFileURL(join(packageRoot, 'backend', 'entry.js')).href,
       archivePath,
       dataDirectory
     }), 'utf8');
