@@ -66,6 +66,18 @@
             "keyId": "thelinyue-apps-ed25519-2026-v2",
             "signature": "Dj6F55W/qkMzEYVDfVM33wo86YhuQ7harqYc1CyjIzYMTnbutE1C6inPhOTrb8YkOnLsSc/G/wG8vw1IAtqrAA=="
           }
+        },
+        {
+          "version": "2.0.2",
+          "hostApiVersion": "1.1",
+          "minWorkbenchVersion": "0.1.7",
+          "url": "https://github.com/thelinyue/Workbench-Apps/releases/download/workbench-apps/analysis-center-v2.0.2.zip",
+          "size": 187937,
+          "sha256": "e3331d60f4c88ed8a2d66ddd8c2fd6c05e520958b16b1ca4d40446adfa114717",
+          "signature": {
+            "keyId": "thelinyue-apps-ed25519-2026-v2",
+            "signature": "WvhmQLg9r+F8gCGLxf6BlrT1fJhPGc1hZe+JNpxChEqtkBjn/9HLsARm9U+L9B06CrE58zqtiXCJV/dgBPIvCg=="
+          }
         }
       ]
     },
