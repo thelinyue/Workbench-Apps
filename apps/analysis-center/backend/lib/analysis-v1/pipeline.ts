@@ -173,14 +173,15 @@ function parseSysinfo(content: string, file: string, add: (ruleId: string, type:
       if (!current || typeof current !== 'object') return;
       const item = current as Record<string, unknown>;
       const diskInfo = item.disk_info as Record<string, unknown> | undefined;
+      const smartInfo = item.smart_info as Record<string, unknown> | undefined;
       const nestedDevice = diskInfo && typeof diskInfo.dev_name === 'string' ? diskInfo.dev_name : undefined;
       const deviceName = typeof item.dev_name === 'string' ? item.dev_name : nestedDevice ?? device;
       const currentDevice = deviceName ? normalizeDeviceName(deviceName) : undefined;
       if (diskInfo && currentDevice) {
-        // disk_info 是唯一的硬盘身份来源；只保存诊断与定位所需字段，避免复制整份 sysinfo。
+        // SMART 快照中的 label 优先作为用户可读硬盘名称，缺失时兼容 disk_info.label；只保存诊断与定位所需字段，避免复制整份 sysinfo。
         deviceIdentities.set(currentDevice, {
           resource: currentDevice,
-          label: readString(diskInfo.label),
+          label: readString(smartInfo?.label) ?? readString(diskInfo.label),
           model: readString(diskInfo.model),
           serial: readString(diskInfo.serial),
           slot: readString(diskInfo.slot),
