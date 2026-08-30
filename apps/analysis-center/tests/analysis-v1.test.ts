@@ -42,6 +42,59 @@ describe('V1 统一诊断分析', () => {
     expect(result.diagnoses).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'storage.device.suspected_failure' })]));
   });
 
+  it('介质故障优先显示 smart_info.label 并沿用硬盘名称中文化', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'smart-label-media-failure.tgz',
+      files: {
+        'kern.log': [
+          'ata1.00: error: { UNC }',
+          'sd 0:0:0:0: [sdb] Sense Key : Medium Error [current]',
+          'sd 0:0:0:0: [sdb] Add. Sense: Unrecovered read error - auto reallocate failed'
+        ].join('\n'),
+        'mdstat.log': '',
+        'sysinfo.json': JSON.stringify({ disk: { devices: [{
+          disk_info: { dev_name: '/dev/sdb', label: 'Hard Drive 1' },
+          smart_info: { label: 'Hard Drive 2', report: [] }
+        }] } })
+      }
+    });
+
+    const diagnosis = result.diagnoses[0];
+    expect(diagnosis).toEqual(expect.objectContaining({
+      id: 'storage.device.media_failure',
+      title: '硬盘 2 存在介质故障',
+      summary: '硬盘 2 存在不可恢复介质读取错误。',
+      userConclusion: '您好，经分析诊断日志，硬盘 2 存在不可恢复介质读取错误，建议更换硬盘 2。',
+      engineerConclusion: expect.stringContaining('硬盘 2：')
+    }));
+    expect(diagnosis.title).not.toContain('/dev/sdb');
+    expect(result.deviceAssessments).toEqual([expect.objectContaining({ resource: '/dev/sdb', label: 'Hard Drive 2' })]);
+  });
+
+  it('介质故障没有 smart_info.label 时回退到 disk_info.label', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'disk-label-media-failure.tgz',
+      files: {
+        'kern.log': 'sd 0:0:0:0: [sdb] Add. Sense: Unrecovered read error - auto reallocate failed',
+        'sysinfo.json': JSON.stringify({ disk: { devices: [{
+          disk_info: { dev_name: '/dev/sdb', label: 'Hard Drive 3' },
+          smart_info: { report: [] }
+        }] } })
+      }
+    });
+
+    expect(result.diagnoses[0]?.title).toBe('硬盘 3 存在介质故障');
+  });
+
+  it('介质故障没有任何设备 label 时回退到设备路径', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'resource-label-media-failure.tgz',
+      files: { 'kern.log': 'sd 0:0:0:0: [sdb] Add. Sense: Unrecovered read error - auto reallocate failed' }
+    });
+
+    expect(result.diagnoses[0]?.title).toBe('/dev/sdb 存在介质故障');
+  });
+
   it('XFS metadata corruption 仍进入文件系统异常规则，不能被性能预筛选跳过', () => {
     const result = analyzeV1Sources({
       sourceName: 'xfs-corruption.tgz',
