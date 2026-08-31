@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatFileSize, getAnalysisStageItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, getWorkspaceGroups } from '../renderer/workspace-presentation';
+import { formatFileSize, getAnalysisStageItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, getWorkspaceGroups, shouldShowSysinfoReport } from '../renderer/workspace-presentation';
 
 describe('分析中心工作区呈现', () => {
   it('最近分析批量选择只覆盖已完成或失败的诊断包，并支持再次点击全选清空', () => {
@@ -27,6 +27,26 @@ describe('分析中心工作区呈现', () => {
       pending: [packages[0]],
       recent: [packages[1], packages[2]]
     });
+  });
+
+  it('最近分析按最近一次终态完成时间排序，没有分析时间时回退到导入时间', () => {
+    const packages = [
+      { id: 'imported-late', status: 'report-ready', detectedAt: '2026-08-28T12:00:00Z', lastAnalysisAt: '2026-08-28T12:30:00Z' },
+      { id: 'reanalyzed', status: 'report-ready', detectedAt: '2026-08-28T09:00:00Z', lastAnalysisAt: '2026-08-28T13:00:00Z' },
+      { id: 'failed', status: 'failed', detectedAt: '2026-08-28T11:00:00Z', lastAnalysisAt: '2026-08-28T14:00:00Z' },
+      { id: 'legacy', status: 'report-ready', detectedAt: '2026-08-28T10:00:00Z' }
+    ] as const;
+
+    expect(getWorkspaceGroups(packages)).toEqual({
+      pending: [],
+      recent: [packages[2], packages[1], packages[0], packages[3]]
+    });
+  });
+
+  it('ZIP 诊断包不显示完整 sysinfo，TGZ 诊断包保留入口', () => {
+    expect(shouldShowSysinfoReport('D:/Inbox/NAS_SERVER_LOG_DEVICE.ZIP')).toBe(false);
+    expect(shouldShowSysinfoReport('D:/Inbox/device.tgz')).toBe(true);
+    expect(shouldShowSysinfoReport('D:/Inbox/device.tgz.temp')).toBe(true);
   });
 
   it('格式化诊断包大小，旧数据缺少大小时显示横线', () => {

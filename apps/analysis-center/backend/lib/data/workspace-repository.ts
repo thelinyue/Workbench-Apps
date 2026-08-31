@@ -178,8 +178,10 @@ export class WorkspaceRepository {
   public getPackage(id: string): DiagnosticPackage | undefined { return this.listPackages().find((item) => item.id === id); }
 
   public listPackages(): DiagnosticPackage[] {
-    const rows = this.database.prepare(`SELECT id, source_path AS sourcePath, extract_path AS extractPath, report_path AS reportPath, display_name AS displayName, source_size_bytes AS sourceSizeBytes, detected_at AS detectedAt, status, task_ids AS taskIds, case_id AS caseId FROM diagnostic_packages ORDER BY detected_at DESC`).all() as unknown as Array<Omit<DiagnosticPackage, 'status' | 'taskIds'> & { status: DiagnosticPackageStatus; taskIds: string }>;
-    return rows.map((item) => ({ ...item, reportPath: item.reportPath ?? undefined, sourceSizeBytes: item.sourceSizeBytes ?? undefined, taskIds: JSON.parse(item.taskIds) as string[] }));
+    const rows = this.database.prepare(`SELECT p.id, p.source_path AS sourcePath, p.extract_path AS extractPath, p.report_path AS reportPath, p.display_name AS displayName, p.source_size_bytes AS sourceSizeBytes, p.detected_at AS detectedAt, p.status, p.task_ids AS taskIds, p.case_id AS caseId,
+      (SELECT MAX(ar.updated_at) FROM analysis_records ar WHERE ar.package_id = p.id AND ar.status IN ('succeeded', 'failed')) AS lastAnalysisAt
+      FROM diagnostic_packages p ORDER BY p.detected_at DESC`).all() as unknown as Array<Omit<DiagnosticPackage, 'status' | 'taskIds' | 'lastAnalysisAt'> & { status: DiagnosticPackageStatus; taskIds: string; lastAnalysisAt: string | null }>;
+    return rows.map((item) => ({ ...item, reportPath: item.reportPath ?? undefined, sourceSizeBytes: item.sourceSizeBytes ?? undefined, lastAnalysisAt: item.lastAnalysisAt ?? undefined, taskIds: JSON.parse(item.taskIds) as string[] }));
   }
 
   public upsertTask(task: AnalysisTaskRecord): void {

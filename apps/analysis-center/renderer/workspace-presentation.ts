@@ -10,12 +10,18 @@ const ANALYSIS_STAGES: Array<{ id: AnalysisTaskStage; label: string }> = [
   { id: 'form-conclusion', label: '形成诊断结论' }
 ];
 
-export function getWorkspaceGroups<T extends { status: string; detectedAt: string }>(packages: readonly T[]): { pending: T[]; recent: T[] } {
+export function getWorkspaceGroups<T extends { status: string; detectedAt: string; lastAnalysisAt?: string }>(packages: readonly T[]): { pending: T[]; recent: T[] } {
   const byDetectedAt = (left: T, right: T) => Date.parse(right.detectedAt) - Date.parse(left.detectedAt);
+  const byAnalysisTime = (left: T, right: T) => Date.parse(right.lastAnalysisAt ?? right.detectedAt) - Date.parse(left.lastAnalysisAt ?? left.detectedAt);
   return {
     pending: packages.filter((item) => item.status === 'pending').sort(byDetectedAt),
-    recent: packages.filter((item) => item.status === 'report-ready' || item.status === 'failed').sort(byDetectedAt).slice(0, 20)
+    recent: packages.filter((item) => item.status === 'report-ready' || item.status === 'failed').sort(byAnalysisTime).slice(0, 20)
   };
+}
+
+/** ZIP 诊断包不包含 sysinfo.json，结果页不应提供无法使用的完整 sysinfo 入口。 */
+export function shouldShowSysinfoReport(sourcePath: string): boolean {
+  return !sourcePath.trim().toLowerCase().endsWith('.zip');
 }
 
 /** 批量删除只作用于最近分析中的终态诊断包，避免误操作排队或正在分析的数据。 */

@@ -16,6 +16,8 @@ export interface DiagnosticPackage {
   displayName: string;
   sourceSizeBytes?: number;
   detectedAt: string;
+  /** 最近一次成功或失败分析的结束时间，由仓储列表查询补充，旧记录可能为空。 */
+  lastAnalysisAt?: string;
   status: DiagnosticPackageStatus;
   taskIds: string[];
   caseId: string;

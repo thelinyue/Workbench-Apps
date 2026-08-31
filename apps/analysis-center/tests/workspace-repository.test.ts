@@ -68,6 +68,34 @@ describe('工作台 SQLite 数据仓储', () => {
     repository.close();
   });
 
+  it('返回每个诊断包最近一次成功或失败分析的终态时间', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'workbench-analysis-time-'));
+    directories.push(dataDirectory);
+    const repository = new WorkspaceRepository(join(dataDirectory, 'workbench.db'));
+    const packages = [
+      { id: 'package-old', sourcePath: 'D:/old.tgz', extractPath: 'D:/old', displayName: 'old.tgz', detectedAt: '2026-08-28T00:00:00Z', status: 'report-ready' as const, taskIds: ['task-old-1', 'task-old-2'], caseId: 'case-old' },
+      { id: 'package-new', sourcePath: 'D:/new.tgz', extractPath: 'D:/new', displayName: 'new.tgz', detectedAt: '2026-08-28T01:00:00Z', status: 'failed' as const, taskIds: ['task-new'], caseId: 'case-new' },
+      { id: 'package-empty', sourcePath: 'D:/empty.tgz', extractPath: 'D:/empty', displayName: 'empty.tgz', detectedAt: '2026-08-28T02:00:00Z', status: 'report-ready' as const, taskIds: [], caseId: 'case-empty' }
+    ];
+    packages.forEach((item) => repository.upsertPackage(item));
+    repository.upsertTask({ id: 'task-old-1', packageId: 'package-old', scope: 'comprehensive', status: 'succeeded', createdAt: '2026-08-28T03:00:00Z', progress: 100, stage: 'form-conclusion', message: '诊断结果已完成' });
+    repository.upsertTask({ id: 'task-old-2', packageId: 'package-old', scope: 'comprehensive', status: 'failed', createdAt: '2026-08-28T04:00:00Z', progress: 100, stage: 'form-conclusion', message: '分析失败' });
+    repository.upsertTask({ id: 'task-new', packageId: 'package-new', scope: 'comprehensive', status: 'failed', createdAt: '2026-08-28T05:00:00Z', progress: 100, stage: 'form-conclusion', message: '分析失败' });
+    repository.upsertAnalysisRecord({ id: 'task-old-1', packageId: 'package-old', taskId: 'task-old-1', status: 'succeeded', createdAt: '2026-08-28T03:00:00Z', updatedAt: '2026-08-28T03:01:00Z' });
+    repository.upsertAnalysisRecord({ id: 'task-old-2', packageId: 'package-old', taskId: 'task-old-2', status: 'failed', createdAt: '2026-08-28T04:00:00Z', updatedAt: '2026-08-28T04:01:00Z' });
+    repository.upsertAnalysisRecord({ id: 'task-new', packageId: 'package-new', taskId: 'task-new', status: 'failed', createdAt: '2026-08-28T05:00:00Z', updatedAt: '2026-08-28T05:01:00Z' });
+
+    try {
+      expect(repository.listPackages()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'package-empty', lastAnalysisAt: undefined }),
+        expect.objectContaining({ id: 'package-new', lastAnalysisAt: '2026-08-28T05:01:00Z' }),
+        expect.objectContaining({ id: 'package-old', lastAnalysisAt: '2026-08-28T04:01:00Z' })
+      ]));
+    } finally {
+      repository.close();
+    }
+  });
+
   it('默认每10秒扫描并开启自动分析，只接受10秒步进的10到60秒', async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), 'workbench-settings-'));
     directories.push(dataDirectory);

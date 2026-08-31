@@ -51,6 +51,12 @@ describe('分析中心 V1 工作区', () => {
     expect(styleSource).toContain('.sysinfo-report-button { min-width: 142px;');
   });
 
+  it('结果页仅为非 ZIP 诊断包渲染完整 sysinfo 入口', () => {
+    expect(viewSource).toContain('shouldShowSysinfoReport');
+    expect(viewSource).toContain('sourcePath');
+    expect(viewSource).toContain('shouldShowSysinfoReport(resultSourcePath) &&');
+  });
+
   it('使用 1100px 产品边界在固定证据栏和覆盖式 Drawer 之间切换', () => {
     expect(viewSource).toContain('className="workspace-dropzone"');
     expect(viewSource).toContain('workspace-list-item${');
