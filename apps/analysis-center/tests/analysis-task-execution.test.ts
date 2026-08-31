@@ -132,6 +132,7 @@ describe('分析任务单线程执行', () => {
       workers[1]!.emit('message', { type: 'completed', succeeded: true, browserPath: join(root, 'slow.html'), analysisResult: successfulResult, runtimeTimings: runtimeTimings(10_000) });
       await vi.waitFor(() => expect(repository.getPackage('package-slow')?.status).toBe('report-ready'));
 
+      expect(repository.listTasks().find((task) => task.packageId === 'package-slow')?.runtimeTimings).toEqual(runtimeTimings(10_000));
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('分析任务耗时异常');
       expect(warnings[0]).toContain('诊断包=package-slow.tgz');
@@ -165,7 +166,11 @@ describe('分析任务单线程执行', () => {
       await vi.waitFor(() => expect(repository.getPackage('package-fails-slowly')?.status).toBe('failed'));
 
       expect(repository.listTasks()).toEqual([
-        expect.objectContaining({ status: 'failed', errorMessage: '分析引擎执行失败：无法解压诊断包：归档损坏' })
+        expect.objectContaining({
+          status: 'failed',
+          errorMessage: '分析引擎执行失败：无法解压诊断包：归档损坏',
+          runtimeTimings: runtimeTimings(12_000)
+        })
       ]);
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('诊断包=package-fails-slowly.tgz');

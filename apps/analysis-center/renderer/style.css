@@ -96,9 +96,10 @@ h1, h2, h3, p { margin: 0; }
 .workspace-item-copy .recent-title.severity-critical { color: #d82f42; }
 .workspace-item-copy .recent-title.severity-warning { color: #c66b1d; }
 .workspace-item-copy .recent-title.severity-info { color: #198754; }
+.workspace-item-copy .analysis-runtime-detail { color: #52657d; font-variant-numeric: tabular-nums; line-height: 1.45; white-space: normal; }
 .package-size, .package-time { color: #718096; font-size: 11px; white-space: nowrap; }
 .package-size { grid-column: 3; }
-.package-time { grid-column: 4; display: inline-flex; align-items: center; gap: 5px; }
+.package-time { grid-column: 4; display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .card-actions { grid-column: 5; position: relative; display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
 .overflow-menu { position: absolute; z-index: 10; top: 39px; right: 0; width: 190px; padding: 5px; border: 1px solid #d4e1ef; border-radius: 6px; box-shadow: 0 12px 28px rgba(35, 55, 84, .16); background: #fff; }
 .overflow-menu button { display: flex; width: 100%; min-height: 33px; padding: 0 8px; align-items: center; gap: 7px; border-color: transparent; color: #253751; text-align: left; }

@@ -59,7 +59,7 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
   expect(result.runtimeTimings.totalMs).toBeGreaterThanOrEqual(result.runtimeTimings.archiveValidationMs);
 });
 
-it('V1 分析会解压并读取 gzip 轮转内核日志', async () => {
+it('V1 分析保留 gzip 轮转日志但不读取其内容，并保留既有非 gzip 文件', async () => {
   const root = await mkdtemp(join(tmpdir(), 'analysis-v1-gzip-'));
   directories.push(root);
   const kernelLog = [
@@ -84,9 +84,10 @@ it('V1 分析会解压并读取 gzip 轮转内核日志', async () => {
 
   const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory });
 
-  expect(result.result.metadata.processedFiles).toBe(4);
-  expect(result.result.diagnoses[0]).toMatchObject({ id: 'storage.device.media_failure', primaryResource: '/dev/sda' });
+  expect(result.result.metadata.processedFiles).toBe(3);
+  expect(result.result.diagnoses).not.toEqual(expect.arrayContaining([expect.objectContaining({ primaryResource: '/dev/sda' })]));
   expect(result.result.findings).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'storage.io_error', affectedResources: expect.arrayContaining(['/dev/sdz']) })]));
+  await expect(access(join(extractDirectory, 'kern.log.1.gz'))).resolves.toBeUndefined();
   await expect(access(archivePath)).resolves.toBeUndefined();
   await expect(readFile(existingPath, 'utf8')).resolves.toBe('keep');
 });
@@ -103,26 +104,26 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
 
   const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted'), profiler: new PipelineProfiler() });
 
-  expect(output.result.metadata.processedFiles).toBe(2);
+  expect(output.result.metadata.processedFiles).toBe(1);
   expect(output.result.metadata.analyzerVersion).toBe('1.1.0');
   expect(output.result.findings).toEqual(expect.arrayContaining([
-    expect.objectContaining({ type: 'storage.io_error', affectedResources: ['/dev/sdc'] }),
-    expect.objectContaining({ type: 'storage.io_error', affectedResources: ['/dev/sdd'] })
+    expect.objectContaining({ type: 'storage.io_error', affectedResources: ['/dev/sdc'] })
   ]));
   expect(output.result.findings).not.toEqual(expect.arrayContaining([
+    expect.objectContaining({ affectedResources: expect.arrayContaining(['/dev/sdd']) }),
     expect.objectContaining({ affectedResources: expect.arrayContaining(['/dev/sdz']) })
   ]));
   expect(output.performanceProfile?.counters).toMatchObject({
     fileInventoryPasses: 1,
     filesDiscovered: 3,
-    filesIgnored: 1,
-    filesRead: 2,
-    linesProcessed: 2,
-    eventsCreated: 2,
-    findingsCreated: 2,
-    evidenceRetained: 2
+    filesIgnored: 2,
+    filesRead: 1,
+    linesProcessed: 1,
+    eventsCreated: 1,
+    findingsCreated: 1,
+    evidenceRetained: 1
   });
-  expect(output.performanceProfile?.files.map((file) => file.alias)).toEqual(['kernel-01', 'kernel-02']);
+  expect(output.performanceProfile?.files.map((file) => file.alias)).toEqual(['kernel-01']);
   expect(JSON.stringify(output.performanceProfile)).not.toContain('DEVICE');
   expect(output.performanceProfile?.stages['archive.extract'].invocations).toBe(1);
   expect(output.performanceProfile?.stages['source.read'].invocations).toBe(1);
@@ -136,6 +137,18 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
   const ordinaryOutput = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'ordinary-extracted') });
   expect(ordinaryOutput.performanceProfile).toBeUndefined();
   expect(normalizeRuntimeFields(ordinaryOutput.result)).toEqual(normalizeRuntimeFields(output.result));
+});
+
+it('V1 分析拒绝 ZIP 中的符号链接条目', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-zip-symlink-'));
+  directories.push(root);
+  const archivePath = join(root, 'nas_server_log_symlink.zip');
+  await createZip(archivePath, [
+    { name: 'outside-link', content: '../outside', mode: 0o120777 }
+  ]);
+
+  await expect(runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') }))
+    .rejects.toThrow('ZIP 诊断包包含不安全的符号链接条目');
 });
 
 it('V1 来源清单保持原有 UTF-16 文件名顺序以稳定 Evidence ID', async () => {
@@ -164,11 +177,11 @@ it('V1 分析在解压目标不是目录时返回中文错误', async () => {
   await expect(runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: extractPath })).rejects.toThrow('无法准备诊断包解压目录');
 });
 
-async function createZip(archivePath: string, files: Array<{ name: string; content: string | Buffer }>): Promise<void> {
+async function createZip(archivePath: string, files: Array<{ name: string; content: string | Buffer; mode?: number }>): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const zip = new yazl.ZipFile();
     zip.outputStream.pipe(createWriteStream(archivePath)).on('close', resolve).on('error', reject);
-    for (const file of files) zip.addBuffer(Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content), file.name);
+    for (const file of files) zip.addBuffer(Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content), file.name, file.mode === undefined ? undefined : { mode: file.mode });
     zip.end();
   });
 }

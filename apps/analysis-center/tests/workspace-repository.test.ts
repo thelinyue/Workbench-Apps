@@ -37,11 +37,33 @@ describe('工作台 SQLite 数据仓储', () => {
       createdAt: '2026-08-25T10:25:01.000Z',
       progress: 0,
       stage: 'identify-package',
-      message: '等待分析'
+      message: '等待分析',
+      runtimeTimings: {
+        archiveValidationMs: 100,
+        archiveExtractionMs: 200,
+        sourceInventoryMs: 300,
+        sourceReadMs: 400,
+        pipelineAnalysisMs: 500,
+        reportRenderMs: 600,
+        totalMs: 2_100
+      }
     });
 
     expect(repository.listPackages()).toEqual([expect.objectContaining({ id: 'package-1', sourceSizeBytes: 1_234_567 })]);
-    expect(repository.listTasks()).toEqual([expect.objectContaining({ id: 'task-1', packageId: 'package-1', stage: 'identify-package' })]);
+    expect(repository.listTasks()).toEqual([expect.objectContaining({
+      id: 'task-1',
+      packageId: 'package-1',
+      stage: 'identify-package',
+      runtimeTimings: {
+        archiveValidationMs: 100,
+        archiveExtractionMs: 200,
+        sourceInventoryMs: 300,
+        sourceReadMs: 400,
+        pipelineAnalysisMs: 500,
+        reportRenderMs: 600,
+        totalMs: 2_100
+      }
+    })]);
 
     repository.close();
   });
@@ -82,7 +104,7 @@ describe('工作台 SQLite 数据仓储', () => {
     try {
       expect(repository.getMonitorSettings()).toMatchObject({ autoAnalyzeEnabled: true, scanIntervalMinutes: 3 });
       expect(repository.listPackages()[0]).toMatchObject({ sourceSizeBytes: undefined });
-      expect(repository.listTasks()[0]).toMatchObject({ stage: 'identify-package' });
+      expect(repository.listTasks()[0]).toMatchObject({ stage: 'identify-package', runtimeTimings: undefined });
     } finally {
       repository.close();
     }

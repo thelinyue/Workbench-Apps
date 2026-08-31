@@ -8,10 +8,11 @@ export type V1SourceType = 'kernel' | 'sysinfo' | 'mdstat' | 'ugvolume';
  */
 export function classifyV1Source(file: string): V1SourceType | undefined {
   const name = file.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() ?? '';
+  if (name.endsWith('.gz')) return undefined;
   if (name === 'sysinfo.json') return 'sysinfo';
   if (name === 'mdstat.log') return 'mdstat';
   if (name === 'ugvolume.log') return 'ugvolume';
-  if (/^(?:kern(?:\.log(?:\.\d+)?)?(?:\.gz)?|syslog(?:\.\d+)?(?:\.gz)?|journal[^/]*|dmesg[^/]*)$/.test(name)) return 'kernel';
-  if (/^[^/]+_(?:syslog(?:\.\d+)?(?:\.gz)?|dmsg\.log\.gz)$/.test(name)) return 'kernel';
+  if (/^(?:kern(?:\.log(?:\.\d+)?)?|syslog(?:\.\d+)?|journal[^/]*|dmesg[^/]*)$/.test(name)) return 'kernel';
+  if (/^[^/]+_syslog(?:\.\d+)?$/.test(name)) return 'kernel';
   return undefined;
 }

@@ -1,4 +1,7 @@
+import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
+import { createDiagnosticArchiveGunzip } from './tgz-stream';
 
 export const INVALID_DIAGNOSTIC_ARCHIVE_MESSAGE = '诊断包文件不完整或已损坏，请重新导出或重新下载后再导入。';
 
@@ -8,7 +11,11 @@ export const INVALID_DIAGNOSTIC_ARCHIVE_MESSAGE = '诊断包文件不完整或�
  */
 export async function assertDiagnosticArchiveIntegrity(sourcePath: string): Promise<void> {
   try {
-    await tar.t({ file: sourcePath, gzip: true, strict: true });
+    await pipeline(
+      createReadStream(sourcePath),
+      createDiagnosticArchiveGunzip(),
+      tar.t({ strict: true })
+    );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`诊断包完整性校验失败：${sourcePath}：${detail}`);

@@ -3,12 +3,13 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { DiagnosticPackage, DiagnosticPackageStatus } from '../domain/diagnostic-package';
 import type { AnalysisResult } from '../analysis-v1/pipeline';
+import type { AnalysisRuntimeTimings } from '../analysis/archive-analysis';
 
 export const MIN_MONITOR_SCAN_INTERVAL_MINUTES = 1;
 export const MAX_MONITOR_SCAN_INTERVAL_MINUTES = 3;
 export const DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES = 1;
 export type AnalysisTaskStage = 'identify-package' | 'parse-system-events' | 'analyze-storage' | 'aggregate-anomalies' | 'form-conclusion';
-export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'comprehensive' | 'storage'; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; createdAt: string; startedAt?: string; progress: number; stage: AnalysisTaskStage; message: string; errorMessage?: string; }
+export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'comprehensive' | 'storage'; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; createdAt: string; startedAt?: string; progress: number; stage: AnalysisTaskStage; message: string; errorMessage?: string; runtimeTimings?: AnalysisRuntimeTimings; }
 export interface AnalysisRecord { id: string; packageId: string; taskId: string; status: AnalysisTaskRecord['status']; createdAt: string; updatedAt: string; }
 export interface MonitorSettings { directory?: string; enabled: boolean; autoAnalyzeEnabled: boolean; scanIntervalMinutes: number; }
 export interface AnalysisFailureRecord { taskId: string; packageId: string; stage: string; errorMessage: string; inputMetadata: Record<string, string>; createdAt: string; }
@@ -165,16 +166,17 @@ export class WorkspaceRepository {
 
   public upsertTask(task: AnalysisTaskRecord): void {
     this.database.prepare(`
-      INSERT INTO analysis_tasks (id, package_id, scope, status, created_at, started_at, progress, stage, message, error_message)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET scope = excluded.scope, status = excluded.status, started_at = excluded.started_at, progress = excluded.progress, stage = excluded.stage, message = excluded.message, error_message = excluded.error_message
-    `).run(task.id, task.packageId, task.scope, task.status, task.createdAt, task.startedAt ?? null, task.progress, task.stage, task.message, task.errorMessage ?? null);
+      INSERT INTO analysis_tasks (id, package_id, scope, status, created_at, started_at, progress, stage, message, error_message, runtime_timings)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET scope = excluded.scope, status = excluded.status, started_at = excluded.started_at, progress = excluded.progress, stage = excluded.stage, message = excluded.message, error_message = excluded.error_message, runtime_timings = excluded.runtime_timings
+    `).run(task.id, task.packageId, task.scope, task.status, task.createdAt, task.startedAt ?? null, task.progress, task.stage, task.message, task.errorMessage ?? null, task.runtimeTimings ? JSON.stringify(task.runtimeTimings) : null);
   }
 
   public getTask(id: string): AnalysisTaskRecord | undefined { return this.listTasks().find((item) => item.id === id); }
 
   public listTasks(): AnalysisTaskRecord[] {
-    return this.database.prepare(`SELECT id, package_id AS packageId, scope, status, created_at AS createdAt, started_at AS startedAt, progress, stage, message, error_message AS errorMessage FROM analysis_tasks ORDER BY created_at DESC`).all() as unknown as AnalysisTaskRecord[];
+    const rows = this.database.prepare(`SELECT id, package_id AS packageId, scope, status, created_at AS createdAt, started_at AS startedAt, progress, stage, message, error_message AS errorMessage, runtime_timings AS runtimeTimings FROM analysis_tasks ORDER BY created_at DESC`).all() as unknown as Array<Omit<AnalysisTaskRecord, 'runtimeTimings'> & { runtimeTimings: string | null }>;
+    return rows.map((row) => ({ ...row, runtimeTimings: row.runtimeTimings ? JSON.parse(row.runtimeTimings) as AnalysisRuntimeTimings : undefined }));
   }
 
   /**
@@ -248,7 +250,7 @@ export class WorkspaceRepository {
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS diagnostic_packages (id TEXT PRIMARY KEY, source_path TEXT NOT NULL, extract_path TEXT NOT NULL, report_path TEXT, display_name TEXT NOT NULL, source_size_bytes INTEGER, detected_at TEXT NOT NULL, status TEXT NOT NULL, task_ids TEXT NOT NULL, case_id TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS analysis_tasks (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT, progress INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'identify-package', message TEXT NOT NULL, error_message TEXT, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS analysis_tasks (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT, progress INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'identify-package', message TEXT NOT NULL, error_message TEXT, runtime_timings TEXT, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS analysis_cases (id TEXT PRIMARY KEY, package_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS analysis_records (id TEXT PRIMARY KEY, package_id TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE, FOREIGN KEY(task_id) REFERENCES analysis_tasks(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS report_index (package_id TEXT PRIMARY KEY, path TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(package_id) REFERENCES diagnostic_packages(id) ON DELETE CASCADE);
@@ -259,6 +261,7 @@ export class WorkspaceRepository {
     try { this.database.exec('ALTER TABLE analysis_tasks ADD COLUMN started_at TEXT;'); } catch { /* 已升级数据库会报告重复列，保持兼容。 */ }
     try { this.database.exec('ALTER TABLE diagnostic_packages ADD COLUMN source_size_bytes INTEGER;'); } catch { /* 新建或已升级数据库均无需处理。 */ }
     try { this.database.exec("ALTER TABLE analysis_tasks ADD COLUMN stage TEXT NOT NULL DEFAULT 'identify-package';"); } catch { /* 新建或已升级数据库均无需处理。 */ }
+    try { this.database.exec('ALTER TABLE analysis_tasks ADD COLUMN runtime_timings TEXT;'); } catch { /* 新建或已升级数据库均无需处理。 */ }
     try { this.database.exec("ALTER TABLE analysis_failures ADD COLUMN input_metadata TEXT NOT NULL DEFAULT '{}';"); } catch { /* 新建或已升级数据库均无需处理。 */ }
   }
 }

@@ -1,10 +1,12 @@
+import { createReadStream } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { gunzipSync } from 'node:zlib';
+import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
 import extractZip from 'extract-zip';
 import { assertDiagnosticArchiveIntegrity } from './archive-integrity';
+import { createDiagnosticArchiveGunzip } from './tgz-stream';
 import { getDiagnosticPackageFormat } from '../domain/diagnostic-package';
 import {
   analyzeExtractedDirectory,
@@ -92,8 +94,14 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
       await prepareExtractDirectory(request.extractDirectory);
       try {
         request.onProgress?.({ progress: 15, stage: 'identify-package', message: '正在解压诊断包' });
-        if (archiveFormat === 'tgz') await tar.x({ file: request.sourcePath, cwd: request.extractDirectory, gzip: true, strict: true });
-        else await extractZip(request.sourcePath, { dir: request.extractDirectory });
+        if (archiveFormat === 'tgz') {
+          await pipeline(
+            createReadStream(request.sourcePath),
+            createDiagnosticArchiveGunzip(),
+            tar.x({ cwd: request.extractDirectory, strict: true })
+          );
+        }
+        else await extractDiagnosticZip(request.sourcePath, request.extractDirectory);
       } catch (error) {
         throw new Error(`无法解压诊断包：${error instanceof Error ? error.message : String(error)}`);
       }
@@ -153,15 +161,13 @@ async function collectV1Sources(root: string, runtimeTimings: AnalysisRuntimeTim
       const startedAt = profiler?.mark();
       try {
         const content = await readFile(path);
-        const decoded = path.toLowerCase().endsWith('.gz') ? gunzipSync(content) : content;
         const fileKey = path.slice(root.length + 1).replaceAll('\\', '/');
-        files[fileKey] = decoded.toString('utf8');
+        files[fileKey] = content.toString('utf8');
         if (profiler) {
-          const decodedBytes = decoded.byteLength;
           profiler.increment('filesRead');
           profiler.increment('bytesRead', content.byteLength);
-          profiler.increment('decodedBytes', decodedBytes);
-          profiler.recordFile(fileKey, source, { bytesRead: content.byteLength, decodedBytes, readDurationMs: startedAt === undefined ? 0 : profiler.elapsed(startedAt) });
+          profiler.increment('decodedBytes', content.byteLength);
+          profiler.recordFile(fileKey, source, { bytesRead: content.byteLength, decodedBytes: content.byteLength, readDurationMs: startedAt === undefined ? 0 : profiler.elapsed(startedAt) });
         }
       }
       catch (error) {
@@ -236,7 +242,7 @@ export async function runArchiveAnalysis(request: ArchiveAnalysisRequest): Promi
     if (archiveFormat === 'tgz') {
       await tar.x({ file: request.sourcePath, cwd: request.extractDirectory, gzip: true, strict: true });
     } else {
-      await extractZip(request.sourcePath, { dir: request.extractDirectory });
+      await extractDiagnosticZip(request.sourcePath, request.extractDirectory);
     }
   } catch (error) {
     throw new Error(`无法解压诊断包：${error instanceof Error ? error.message : String(error)}`);
@@ -273,6 +279,22 @@ async function prepareExtractDirectory(extractDirectory: string): Promise<void> 
   } catch (error) {
     throw new Error(`无法准备诊断包解压目录：${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/**
+ * ZIP 诊断包只允许普通文件和目录。extract-zip 上游会直接创建符号链接，
+ * 因此必须在写入磁盘前拒绝该条目，避免归档通过链接指向解压目录之外。
+ */
+async function extractDiagnosticZip(sourcePath: string, extractDirectory: string): Promise<void> {
+  await extractZip(sourcePath, {
+    dir: extractDirectory,
+    onEntry: (entry) => {
+      const unixMode = entry.externalFileAttributes >>> 16;
+      if ((unixMode & 0o170000) === 0o120000) {
+        throw new Error(`ZIP 诊断包包含不安全的符号链接条目：${entry.fileName}`);
+      }
+    }
+  });
 }
 
 /** 保留插件的 Report/static 与 Report/structured 目录约定，所有报告产物均可独立打开。 */

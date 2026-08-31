@@ -182,7 +182,7 @@ export class AnalysisTaskService extends EventEmitter {
         diagnosticPackage.status = 'report-ready';
         diagnosticPackage.reportPath = output.browserPath;
         this.repository.upsertPackage(diagnosticPackage);
-        this.repository.upsertTask({ ...runningTask, status: 'succeeded', progress: 100, stage: 'form-conclusion', message: '诊断结果已完成' });
+        this.repository.upsertTask({ ...runningTask, status: 'succeeded', progress: 100, stage: 'form-conclusion', message: '诊断结果已完成', runtimeTimings });
         this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'succeeded', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
         this.repository.saveAnalysisResult(task.packageId, task.id, output.result);
         this.repository.upsertReport(task.packageId, output.browserPath);
@@ -212,7 +212,7 @@ export class AnalysisTaskService extends EventEmitter {
       diagnosticPackage.status = 'failed';
       this.repository.upsertPackage(diagnosticPackage);
       const currentStage = this.repository.getTask(task.id)?.stage ?? runningTask.stage;
-      this.repository.upsertTask({ ...runningTask, status: 'failed', progress: 100, stage: currentStage, message: '分析失败', errorMessage: failureMessage });
+      this.repository.upsertTask({ ...runningTask, status: 'failed', progress: 100, stage: currentStage, message: '分析失败', errorMessage: failureMessage, runtimeTimings });
       this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'failed', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
       this.repository.saveAnalysisFailure(task.packageId, task.id, inferFailureStage(errorMessage), failureMessage, { sourcePath: diagnosticPackage.sourcePath, displayName: diagnosticPackage.displayName });
       this.notify({
