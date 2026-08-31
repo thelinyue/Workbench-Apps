@@ -18,6 +18,17 @@ export function getWorkspaceGroups<T extends { status: string; detectedAt: strin
   };
 }
 
+/** 批量删除只作用于最近分析中的终态诊断包，避免误操作排队或正在分析的数据。 */
+export function getRecentAnalysisPackageIds(packages: readonly { id: string; status: string }[]): string[] {
+  return packages.filter((item) => item.status === 'report-ready' || item.status === 'failed').map((item) => item.id);
+}
+
+/** 全选按钮在“全部选中”和“全部取消”之间切换，返回新的选择快照供渲染层保存。 */
+export function getNextRecentPackageSelection(packages: readonly { id: string; status: string }[], selectedIds: readonly string[]): string[] {
+  const selectableIds = getRecentAnalysisPackageIds(packages);
+  return selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id)) ? [] : selectableIds;
+}
+
 export function formatFileSize(bytes: number | undefined): string {
   if (bytes === undefined) return '—';
   if (bytes < 1024) return `${bytes} B`;

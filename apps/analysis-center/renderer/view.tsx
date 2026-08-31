@@ -1,4 +1,4 @@
-import { ChevronLeft, CircleAlert, CircleCheck, Clock3, Copy, ExternalLink, FileJson2, FilePlus2, FolderOpen, LoaderCircle, MoreHorizontal, PanelRightOpen, Play, Save, ScanSearch, Settings, ShieldAlert, Upload, X } from 'lucide-react';
+import { ChevronLeft, CircleAlert, CircleCheck, Clock3, Copy, ExternalLink, FileJson2, FilePlus2, FolderOpen, LoaderCircle, MoreHorizontal, PanelRightOpen, Play, Save, ScanSearch, Settings, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildResultPresentation } from '../shared/result-presentation';
 import { createEvidenceDrawerController, getEvidencePresentation, type EvidenceDrawerController, type EvidenceDrawerState } from './evidence-drawer';
@@ -8,7 +8,7 @@ import { createSettingsActions, type MonitorSettings } from './settings-actions'
 import { formatElapsed, getAnalysisRuntimePresentation, getLatestRuntimeTimingsByPackageId, getQueuePosition, isOutsideOverflowMenu, type AnalysisRuntimeTimingsView } from './task-presentation';
 import { startDialogLifecycle } from './dialog-lifecycle';
 import { openSysinfoReport } from './sysinfo-report-action';
-import { formatFileSize, getAnalysisStageItems, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPresentation, getWorkspaceGroups, type AnalysisTaskStage } from './workspace-presentation';
+import { formatFileSize, getAnalysisStageItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, getWorkspaceGroups, type AnalysisTaskStage } from './workspace-presentation';
 
 interface PackageItem { id: string; displayName: string; sourcePath: string; sourceSizeBytes?: number; detectedAt: string; status: 'pending' | 'queued' | 'running' | 'report-ready' | 'failed' | 'cancelled'; reportPath?: string; }
 interface TaskItem { id: string; packageId: string; status: string; createdAt: string; startedAt?: string; progress: number; stage: AnalysisTaskStage; message: string; errorMessage?: string; runtimeTimings?: AnalysisRuntimeTimingsView; }
@@ -20,8 +20,8 @@ interface EvidenceContext { available: boolean; lines: string[]; message?: strin
 interface PackageDeletionPreview { packageCount: number; extractPaths: string[]; confirmationToken: string; }
 interface PackageRecordDeletionPreview { packageCount: number; taskCount: number; caseCount: number; analysisRecordCount: number; reportRecordCount: number; confirmationToken: string; }
 type PendingPackageDeletion =
-  | { packageId: string; mode: 'lifecycle'; preview: PackageDeletionPreview; trigger: HTMLButtonElement | null }
-  | { packageId: string; mode: 'records'; preview: PackageRecordDeletionPreview; trigger: HTMLButtonElement | null };
+  | { packageIds: string[]; mode: 'lifecycle'; preview: PackageDeletionPreview; trigger: HTMLButtonElement | null }
+  | { packageIds: string[]; mode: 'records'; preview: PackageRecordDeletionPreview; trigger: HTMLButtonElement | null };
 
 const host = new AppHostClient('analysis-center');
 
@@ -167,7 +167,7 @@ export function AnalysisCenterApp() {
     {message && <div className="message" role="alert">{message}</div>}
     <WorkspaceList title="待分析" items={pending} emptyText="当前没有待分析诊断包" onChanged={load} onError={showError} action={(item) => <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />开始分析</button>} />
     <RunningTasks tasks={running} packages={packages} now={now} />
-    <WorkspaceList title="最近分析" items={recent} emptyText="暂无已完成或失败的分析" onChanged={load} onError={showError} failureByPackageId={failureByPackageId} resultByPackageId={resultByPackageId} runtimeTimingsByPackageId={runtimeTimingsByPackageId} onAnalyze={analyze} highlightedPackageId={highlightedPackageId} highlightedRef={highlightedRef} action={(item) => item.status === 'report-ready' ? <button className="secondary-action" onClick={() => void openResult(item.id).catch(showError)}>查看结果</button> : <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>} />
+    <WorkspaceList title="最近分析" items={recent} emptyText="暂无已完成或失败的分析" onChanged={load} onError={showError} failureByPackageId={failureByPackageId} resultByPackageId={resultByPackageId} runtimeTimingsByPackageId={runtimeTimingsByPackageId} onAnalyze={analyze} enableBatchDeletion highlightedPackageId={highlightedPackageId} highlightedRef={highlightedRef} action={(item) => item.status === 'report-ready' ? <button className="secondary-action" onClick={() => void openResult(item.id).catch(showError)}>查看结果</button> : <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>} />
     <section className="workspace-dropzone"><FolderOpen size={18} aria-hidden="true" /><span>不在监控目录中？</span><button className="text-action" onClick={() => void importPackages()}>手动选择诊断包</button><small>导入后进入待分析</small></section>
     {dragging && <div className="drop-overlay" role="presentation"><div className="drop-target"><span className="drop-icon"><Upload size={34} aria-hidden="true" /></span><strong>松开以导入诊断包</strong><p>支持 .tgz · .tgz.temp · .zip</p><small>导入后将加入待分析</small></div></div>}
     {settingsDialog}
@@ -175,15 +175,22 @@ export function AnalysisCenterApp() {
 }
 
 /** 诊断包列表复用同一行结构，避免各个状态分区的文件信息呈现出现偏差。 */
-function WorkspaceList({ title, items, emptyText, action, onChanged, onError, failureByPackageId, resultByPackageId, runtimeTimingsByPackageId, onAnalyze, highlightedPackageId, highlightedRef }: { title: string; items: PackageItem[]; emptyText: string; action: (item: PackageItem) => React.ReactNode; onChanged: () => Promise<void>; onError: (error: unknown) => void; failureByPackageId?: Map<string, string>; resultByPackageId?: Map<string, Result>; runtimeTimingsByPackageId?: Map<string, AnalysisRuntimeTimingsView>; onAnalyze?: (packageId: string) => Promise<void>; highlightedPackageId?: string; highlightedRef?: React.MutableRefObject<HTMLElement | null> }) {
+function WorkspaceList({ title, items, emptyText, action, onChanged, onError, failureByPackageId, resultByPackageId, runtimeTimingsByPackageId, onAnalyze, enableBatchDeletion = false, highlightedPackageId, highlightedRef }: { title: string; items: PackageItem[]; emptyText: string; action: (item: PackageItem) => React.ReactNode; onChanged: () => Promise<void>; onError: (error: unknown) => void; failureByPackageId?: Map<string, string>; resultByPackageId?: Map<string, Result>; runtimeTimingsByPackageId?: Map<string, AnalysisRuntimeTimingsView>; onAnalyze?: (packageId: string) => Promise<void>; enableBatchDeletion?: boolean; highlightedPackageId?: string; highlightedRef?: React.MutableRefObject<HTMLElement | null> }) {
   const [openMenuPackageId, setOpenMenuPackageId] = useState<string>();
   const [deletingPackageId, setDeletingPackageId] = useState<string>();
   const [pendingDeletion, setPendingDeletion] = useState<PendingPackageDeletion>();
   const [deletionSubmitting, setDeletionSubmitting] = useState(false);
+  const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
+  const [batchPreviewLoading, setBatchPreviewLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const batchDeleteTriggerRef = useRef<HTMLButtonElement>(null);
   const deletionSubmittingRef = useRef(false);
   deletionSubmittingRef.current = deletionSubmitting;
+  const selectablePackageIds = enableBatchDeletion ? getRecentAnalysisPackageIds(items) : [];
+  const selectedIds = selectedPackageIds.filter((id) => selectablePackageIds.includes(id));
+  const allSelectableSelected = selectablePackageIds.length > 0 && selectablePackageIds.every((id) => selectedIds.includes(id));
+  const deletionBusy = batchPreviewLoading || deletionSubmitting || Boolean(deletingPackageId);
   useEffect(() => {
     const closeFromOutside = (event: PointerEvent) => { if (openMenuPackageId && isOutsideOverflowMenu(event.target, menuRef.current, triggerRef.current)) setOpenMenuPackageId(undefined); };
     const closeFromEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpenMenuPackageId(undefined); };
@@ -193,20 +200,40 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
   }, [openMenuPackageId]);
   const locate = async (packageId: string, method: 'packages.locate-source' | 'packages.locate-extract') => { const path = await host.invoke<string>(method, { packageId }); await host.invoke('host.showItemInFolder', { path }); };
   const remove = async (packageId: string, mode: 'lifecycle' | 'records') => {
+    if (deletionBusy) return;
     const trigger = triggerRef.current;
     setOpenMenuPackageId(undefined);
     setDeletingPackageId(packageId);
     try {
       if (mode === 'records') {
         const preview = await host.invoke<PackageRecordDeletionPreview>('packages.delete-record-preview', { packageIds: [packageId] });
-        setPendingDeletion({ packageId, mode, preview, trigger });
+        setPendingDeletion({ packageIds: [packageId], mode, preview, trigger });
       } else {
         const preview = await host.invoke<PackageDeletionPreview>('packages.delete-preview', { packageIds: [packageId] });
-        setPendingDeletion({ packageId, mode, preview, trigger });
+        setPendingDeletion({ packageIds: [packageId], mode, preview, trigger });
       }
     } catch (error) {
       setDeletingPackageId(undefined);
       throw error;
+    }
+  };
+  const togglePackageSelection = (packageId: string, checked: boolean) => {
+    setSelectedPackageIds((current) => checked
+      ? current.includes(packageId) ? current : [...current, packageId]
+      : current.filter((id) => id !== packageId));
+  };
+  const toggleAllSelection = () => setSelectedPackageIds(getNextRecentPackageSelection(items, selectedIds));
+  const requestBatchDeletion = async () => {
+    if (selectedIds.length === 0 || deletionBusy) return;
+    const packageIds = [...selectedIds];
+    setBatchPreviewLoading(true);
+    try {
+      const preview = await host.invoke<PackageDeletionPreview>('packages.delete-preview', { packageIds });
+      setPendingDeletion({ packageIds, mode: 'lifecycle', preview, trigger: batchDeleteTriggerRef.current });
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBatchPreviewLoading(false);
     }
   };
   const cancelDeletion = useCallback(() => {
@@ -219,10 +246,11 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
     setDeletionSubmitting(true);
     try {
       if (pendingDeletion.mode === 'records') {
-        await host.invoke('packages.delete-record', { packageIds: [pendingDeletion.packageId], confirmationToken: pendingDeletion.preview.confirmationToken });
+        await host.invoke('packages.delete-record', { packageIds: pendingDeletion.packageIds, confirmationToken: pendingDeletion.preview.confirmationToken });
       } else {
-        await host.invoke('packages.delete', { packageIds: [pendingDeletion.packageId], confirmationToken: pendingDeletion.preview.confirmationToken });
+        await host.invoke('packages.delete', { packageIds: pendingDeletion.packageIds, confirmationToken: pendingDeletion.preview.confirmationToken });
       }
+      setSelectedPackageIds((current) => current.filter((id) => !pendingDeletion.packageIds.includes(id)));
       setPendingDeletion(undefined);
       setDeletingPackageId(undefined);
       await onChanged();
@@ -234,14 +262,14 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
       setDeletionSubmitting(false);
     }
   };
-  return <section className="workspace-section workspace-list"><header className="workspace-section-heading"><h2>{title} <span>{items.length}</span></h2></header>{items.length === 0 ? <div className="workspace-empty"><span>{emptyText}</span></div> : items.map((item) => {
+  return <section className="workspace-section workspace-list"><header className="workspace-section-heading"><h2>{title} <span>{items.length}</span></h2>{enableBatchDeletion && <div className="workspace-batch-actions"><label className="batch-select-all"><input type="checkbox" checked={allSelectableSelected} disabled={selectablePackageIds.length === 0 || deletionBusy} aria-label="全选最近分析" onChange={toggleAllSelection} /><span>全选</span></label><button ref={batchDeleteTriggerRef} type="button" className="danger-action batch-delete-action" disabled={selectedIds.length === 0 || deletionBusy} onClick={() => void requestBatchDeletion()}>{batchPreviewLoading ? <LoaderCircle className="is-spinning" size={15} aria-hidden="true" /> : <Trash2 size={15} aria-hidden="true" />}<span>{batchPreviewLoading ? '准备中' : `批量删除${selectedIds.length > 0 ? `（${selectedIds.length}）` : ''}`}</span></button></div>}</header>{items.length === 0 ? <div className="workspace-empty"><span>{emptyText}</span></div> : items.map((item) => {
     const analysisResult = resultByPackageId?.get(item.id);
     const isRecent = item.status === 'report-ready' || item.status === 'failed';
     const presentation = getRecentAnalysisPresentation({ status: item.status, displayName: item.displayName, result: analysisResult, failureMessage: failureByPackageId?.get(item.id) });
     const runtimePresentation = getAnalysisRuntimePresentation(runtimeTimingsByPackageId?.get(item.id));
     const active = item.status === 'running' || item.status === 'queued';
     const deleting = deletingPackageId === item.id;
-    return <article ref={highlightedPackageId === item.id ? highlightedRef : undefined} tabIndex={highlightedPackageId === item.id ? -1 : undefined} className={`workspace-list-item${highlightedPackageId === item.id ? ' is-highlighted' : ''}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); setOpenMenuPackageId(item.id); }}><PackageStatusIcon tone={getPackageTone(item.status, presentation.severity)} /><div className="workspace-item-copy"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span title={presentation.detail}>{isRecent ? presentation.detail : item.sourcePath}</span>{isRecent && runtimePresentation && <span className="analysis-runtime-detail" title={runtimePresentation.detail}>{runtimePresentation.detail}</span>}</div>{!isRecent && <span className="package-size">{formatFileSize(item.sourceSizeBytes)}</span>}<span className="package-time"><Clock3 size={13} aria-hidden="true" />{isRecent ? runtimePresentation?.total ?? '暂无用时记录' : formatDetectedAt(item.detectedAt)}</span><div className="card-actions">{action(item)}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{onAnalyze && (item.status === 'report-ready' || item.status === 'failed') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button type="button" role="menuitem" disabled={active || deleting} onClick={() => void remove(item.id, 'records').catch(onError)}>仅删除记录</button><button className="danger" type="button" role="menuitem" disabled={active || deleting} onClick={() => void remove(item.id, 'lifecycle').catch(onError)}>删除诊断包</button></div>}</div></article>;
+    return <article ref={highlightedPackageId === item.id ? highlightedRef : undefined} tabIndex={highlightedPackageId === item.id ? -1 : undefined} className={`workspace-list-item${highlightedPackageId === item.id ? ' is-highlighted' : ''}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); setOpenMenuPackageId(item.id); }}><div className="workspace-status-cell">{enableBatchDeletion && isRecent && <input className="package-selection" type="checkbox" checked={selectedIds.includes(item.id)} disabled={deletionBusy} aria-label={`选择删除${item.displayName}`} onChange={(event) => togglePackageSelection(item.id, event.target.checked)} />}<PackageStatusIcon tone={getPackageTone(item.status, presentation.severity)} /></div><div className="workspace-item-copy"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span title={presentation.detail}>{isRecent ? presentation.detail : item.sourcePath}</span>{isRecent && runtimePresentation && <span className="analysis-runtime-detail" title={runtimePresentation.detail}>{runtimePresentation.detail}</span>}</div>{!isRecent && <span className="package-size">{formatFileSize(item.sourceSizeBytes)}</span>}<span className="package-time"><Clock3 size={13} aria-hidden="true" />{isRecent ? runtimePresentation?.total ?? '暂无用时记录' : formatDetectedAt(item.detectedAt)}</span><div className="card-actions">{action(item)}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" disabled={deletionBusy} aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{onAnalyze && (item.status === 'report-ready' || item.status === 'failed') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'records').catch(onError)}>仅删除记录</button><button className="danger" type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'lifecycle').catch(onError)}>删除诊断包</button></div>}</div></article>;
   })}{pendingDeletion && <PackageDeletionDialog pending={pendingDeletion} submitting={deletionSubmitting} onCancel={cancelDeletion} onConfirm={() => void confirmDeletion()} />}</section>;
 }
 

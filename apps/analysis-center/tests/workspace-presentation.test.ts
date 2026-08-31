@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { formatFileSize, getAnalysisStageItems, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPresentation, getWorkspaceGroups } from '../renderer/workspace-presentation';
+import { formatFileSize, getAnalysisStageItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, getWorkspaceGroups } from '../renderer/workspace-presentation';
 
 describe('分析中心工作区呈现', () => {
+  it('最近分析批量选择只覆盖已完成或失败的诊断包，并支持再次点击全选清空', () => {
+    const packages = [
+      { id: 'failed', status: 'failed' },
+      { id: 'success', status: 'report-ready' },
+      { id: 'pending', status: 'pending' },
+      { id: 'running', status: 'running' }
+    ] as const;
+
+    expect(getRecentAnalysisPackageIds(packages)).toEqual(['failed', 'success']);
+    expect(getNextRecentPackageSelection(packages, [])).toEqual(['failed', 'success']);
+    expect(getNextRecentPackageSelection(packages, ['failed', 'success'])).toEqual([]);
+  });
+
   it('把成功和失败统一放入最近分析，待分析与活动任务保持独立', () => {
     const packages = [
       { id: 'pending', status: 'pending', detectedAt: '2026-08-28T10:00:00Z' },

@@ -94,4 +94,26 @@ describe('分析中心 backend Worker', () => {
       await backend.close();
     }
   });
+
+  it('使用同一个确认令牌批量永久删除多个诊断包及其记录', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-batch-delete-'));
+    directories.push(dataDirectory);
+    const sourcePaths = [join(dataDirectory, 'device-a.tgz'), join(dataDirectory, 'device-b.tgz')];
+    await Promise.all(sourcePaths.map((sourcePath) => writeFile(sourcePath, 'archive-placeholder')));
+    const backend = createAppBackend({ appId: 'analysis-center', dataDirectory, manifest: {}, emit: () => undefined, showNotification: () => undefined });
+
+    try {
+      const packages = await Promise.all(sourcePaths.map((sourcePath) => backend.invoke('packages.import', { sourcePath }) as Promise<{ id: string }>));
+      const packageIds = packages.map((item) => item.id);
+      const preview = await backend.invoke('packages.delete-preview', { packageIds }) as { packageCount: number; confirmationToken: string };
+      expect(preview.packageCount).toBe(2);
+
+      await backend.invoke('packages.delete', { packageIds, confirmationToken: preview.confirmationToken });
+
+      await Promise.all(sourcePaths.map((sourcePath) => expect(access(sourcePath)).rejects.toThrow()));
+      await expect(backend.invoke('packages.list', null)).resolves.toEqual([]);
+    } finally {
+      await backend.close();
+    }
+  });
 });
