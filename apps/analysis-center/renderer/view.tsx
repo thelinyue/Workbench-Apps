@@ -186,6 +186,7 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
   const [pendingDeletion, setPendingDeletion] = useState<PendingPackageDeletion>();
   const [deletionSubmitting, setDeletionSubmitting] = useState(false);
   const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
+  const [batchSelectionOpen, setBatchSelectionOpen] = useState(false);
   const [batchPreviewLoading, setBatchPreviewLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -193,9 +194,15 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
   const deletionSubmittingRef = useRef(false);
   deletionSubmittingRef.current = deletionSubmitting;
   const selectablePackageIds = enableBatchDeletion ? getRecentAnalysisPackageIds(items) : [];
+  const itemsSnapshot = items.map((item) => `${item.id}:${item.status}`).join('\u0000');
   const selectedIds = selectedPackageIds.filter((id) => selectablePackageIds.includes(id));
   const allSelectableSelected = selectablePackageIds.length > 0 && selectablePackageIds.every((id) => selectedIds.includes(id));
   const deletionBusy = batchPreviewLoading || deletionSubmitting || Boolean(deletingPackageId);
+  /** 列表数据变化或无可选记录时退出批量选择，避免刷新后的旧选择继续生效。 */
+  useEffect(() => {
+    setBatchSelectionOpen(false);
+    setSelectedPackageIds([]);
+  }, [enableBatchDeletion, itemsSnapshot]);
   useEffect(() => {
     const closeFromOutside = (event: PointerEvent) => { if (openMenuPackageId && isOutsideOverflowMenu(event.target, menuRef.current, triggerRef.current)) setOpenMenuPackageId(undefined); };
     const closeFromEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpenMenuPackageId(undefined); };
@@ -227,7 +234,11 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
       ? current.includes(packageId) ? current : [...current, packageId]
       : current.filter((id) => id !== packageId));
   };
-  const toggleAllSelection = () => setSelectedPackageIds(getNextRecentPackageSelection(items, selectedIds));
+  const toggleAllSelection = () => {
+    const nextSelection = getNextRecentPackageSelection(items, selectedIds);
+    setSelectedPackageIds(nextSelection);
+    setBatchSelectionOpen(nextSelection.length > 0);
+  };
   const requestBatchDeletion = async () => {
     if (selectedIds.length === 0 || deletionBusy) return;
     const packageIds = [...selectedIds];
@@ -255,7 +266,8 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
       } else {
         await host.invoke('packages.delete', { packageIds: pendingDeletion.packageIds, confirmationToken: pendingDeletion.preview.confirmationToken });
       }
-      setSelectedPackageIds((current) => current.filter((id) => !pendingDeletion.packageIds.includes(id)));
+      setSelectedPackageIds([]);
+      setBatchSelectionOpen(false);
       setPendingDeletion(undefined);
       setDeletingPackageId(undefined);
       await onChanged();
@@ -274,7 +286,7 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
     const runtimePresentation = getAnalysisRuntimePresentation(runtimeTimingsByPackageId?.get(item.id));
     const active = item.status === 'running' || item.status === 'queued';
     const deleting = deletingPackageId === item.id;
-    return <article ref={highlightedPackageId === item.id ? highlightedRef : undefined} tabIndex={highlightedPackageId === item.id ? -1 : undefined} className={`workspace-list-item${highlightedPackageId === item.id ? ' is-highlighted' : ''}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); setOpenMenuPackageId(item.id); }}><div className="workspace-status-cell">{enableBatchDeletion && isRecent && <input className="package-selection" type="checkbox" checked={selectedIds.includes(item.id)} disabled={deletionBusy} aria-label={`选择删除${item.displayName}`} onChange={(event) => togglePackageSelection(item.id, event.target.checked)} />}<PackageStatusIcon tone={getPackageTone(item.status, presentation.severity)} /></div><div className="workspace-item-copy"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span title={presentation.detail}>{isRecent ? presentation.detail : item.sourcePath}</span>{isRecent && runtimePresentation && <span className="analysis-runtime-detail" title={runtimePresentation.detail}>{runtimePresentation.detail}</span>}</div>{!isRecent && <span className="package-size">{formatFileSize(item.sourceSizeBytes)}</span>}<span className="package-time"><Clock3 size={13} aria-hidden="true" />{isRecent ? runtimePresentation?.total ?? '暂无用时记录' : formatDetectedAt(item.detectedAt)}</span><div className="card-actions">{action(item)}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" disabled={deletionBusy} aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{onAnalyze && (item.status === 'report-ready' || item.status === 'failed') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'records').catch(onError)}>仅删除记录</button><button className="danger" type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'lifecycle').catch(onError)}>删除诊断包</button></div>}</div></article>;
+    return <article ref={highlightedPackageId === item.id ? highlightedRef : undefined} tabIndex={highlightedPackageId === item.id ? -1 : undefined} className={`workspace-list-item${highlightedPackageId === item.id ? ' is-highlighted' : ''}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); setOpenMenuPackageId(item.id); }}><div className="workspace-status-cell">{batchSelectionOpen && enableBatchDeletion && isRecent && <input className="package-selection" type="checkbox" checked={selectedIds.includes(item.id)} disabled={deletionBusy} aria-label={`选择删除${item.displayName}`} onChange={(event) => togglePackageSelection(item.id, event.target.checked)} />}<PackageStatusIcon tone={getPackageTone(item.status, presentation.severity)} /></div><div className="workspace-item-copy"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span title={presentation.detail}>{isRecent ? presentation.detail : item.sourcePath}</span>{isRecent && runtimePresentation && <span className="analysis-runtime-detail" title={runtimePresentation.detail}>{runtimePresentation.detail}</span>}</div>{!isRecent && <span className="package-size">{formatFileSize(item.sourceSizeBytes)}</span>}<span className="package-time"><Clock3 size={13} aria-hidden="true" />{isRecent ? runtimePresentation?.total ?? '暂无用时记录' : formatDetectedAt(item.detectedAt)}</span><div className="card-actions">{action(item)}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" disabled={deletionBusy} aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{onAnalyze && (item.status === 'report-ready' || item.status === 'failed') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'records').catch(onError)}>仅删除记录</button><button className="danger" type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'lifecycle').catch(onError)}>删除诊断包</button></div>}</div></article>;
   })}{pendingDeletion && <PackageDeletionDialog pending={pendingDeletion} submitting={deletionSubmitting} onCancel={cancelDeletion} onConfirm={() => void confirmDeletion()} />}</section>;
 }
 

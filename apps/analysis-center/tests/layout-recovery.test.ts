@@ -104,6 +104,18 @@ describe('分析中心 V1 工作区', () => {
     expect(viewSource).toContain('const settingsDialog = settingsOpen && <SettingsDialog');
   });
 
+  it('最近分析默认隐藏单项勾选框，点击全选后进入批量选择模式', () => {
+    expect(viewSource).toContain('const [batchSelectionOpen, setBatchSelectionOpen] = useState(false);');
+    expect(viewSource).toContain('const nextSelection = getNextRecentPackageSelection(items, selectedIds);');
+    expect(viewSource).toContain('setBatchSelectionOpen(nextSelection.length > 0);');
+    expect(viewSource).toContain('batchSelectionOpen && enableBatchDeletion && isRecent &&');
+  });
+
+  it('清空全选或删除完成后退出批量选择模式', () => {
+    expect(viewSource).toContain('setBatchSelectionOpen(false);');
+    expect(viewSource).toContain('setSelectedPackageIds([]);');
+  });
+
   it('文件选择和拖入均接入批次导入 workflow，拖入文案明确只导入待分析', () => {
     expect(viewSource).toContain('packageImportWorkflow.importSelectedFiles()');
     expect(viewSource).toContain('packageImportWorkflow.importDroppedFiles(files)');
