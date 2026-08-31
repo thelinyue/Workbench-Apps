@@ -17,8 +17,20 @@ describe('诊断包完整性预检', () => {
     await tar.c({ gzip: true, cwd: root, file: archivePath }, ['placeholder.log']);
     const archive = await readFile(archivePath);
     await writeFile(archivePath, archive.subarray(0, archive.length - 8));
+    const runtimeTimings = {
+      archiveValidationMs: 0,
+      archiveExtractionMs: 0,
+      sourceInventoryMs: 0,
+      sourceReadMs: 0,
+      pipelineAnalysisMs: 0,
+      reportRenderMs: 0,
+      totalMs: 0
+    };
 
-    await expect(runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'device') }))
+    await expect(runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'device'), runtimeTimings }))
       .rejects.toThrow('诊断包文件不完整或已损坏，请重新导出或重新下载后再导入。');
+    expect(runtimeTimings.archiveValidationMs).toBeGreaterThan(0);
+    expect(runtimeTimings.totalMs).toBeGreaterThanOrEqual(runtimeTimings.archiveValidationMs);
+    expect(Object.values(runtimeTimings).every((duration) => duration >= 0)).toBe(true);
   });
 });

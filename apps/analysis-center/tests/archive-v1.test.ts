@@ -45,6 +45,18 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
     'aggregate-anomalies',
     'form-conclusion'
   ]);
+  expect(result.runtimeTimings).toMatchObject({
+    archiveValidationMs: expect.any(Number),
+    archiveExtractionMs: expect.any(Number),
+    sourceInventoryMs: expect.any(Number),
+    sourceReadMs: expect.any(Number),
+    pipelineAnalysisMs: expect.any(Number),
+    reportRenderMs: expect.any(Number),
+    totalMs: expect.any(Number)
+  });
+  expect(Object.values(result.runtimeTimings).every((duration) => duration >= 0)).toBe(true);
+  expect(result.runtimeTimings.archiveValidationMs).toBeGreaterThan(0);
+  expect(result.runtimeTimings.totalMs).toBeGreaterThanOrEqual(result.runtimeTimings.archiveValidationMs);
 });
 
 it('V1 分析会解压并读取 gzip 轮转内核日志', async () => {

@@ -107,6 +107,103 @@ describe('分析任务单线程执行', () => {
       repository.close();
     }
   });
+
+  it('仅对达到十秒的成功任务输出一次不含源路径的中文分段耗时', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'analysis-task-slow-warning-'));
+    directories.push(root);
+    const repository = new WorkspaceRepository(join(root, 'analysis-center.db'));
+    repository.upsertPackage(packageRecord('package-fast', await createArchive(root, 'package-fast')));
+    repository.upsertPackage(packageRecord('package-slow', await createArchive(root, 'package-slow')));
+    const workers: FakeAnalysisWorker[] = [];
+    const warnings: string[] = [];
+    const service = new AnalysisTaskService(repository, {
+      createWorker: () => { const worker = new FakeAnalysisWorker(); workers.push(worker); return worker; },
+      logger: { warn: (message) => warnings.push(message) }
+    });
+
+    try {
+      await service.enqueue('package-fast');
+      await vi.waitFor(() => expect(workers).toHaveLength(1));
+      workers[0]!.emit('message', { type: 'completed', succeeded: true, browserPath: join(root, 'fast.html'), analysisResult: successfulResult, runtimeTimings: runtimeTimings(9_999) });
+      await vi.waitFor(() => expect(repository.getPackage('package-fast')?.status).toBe('report-ready'));
+
+      await service.enqueue('package-slow');
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
+      workers[1]!.emit('message', { type: 'completed', succeeded: true, browserPath: join(root, 'slow.html'), analysisResult: successfulResult, runtimeTimings: runtimeTimings(10_000) });
+      await vi.waitFor(() => expect(repository.getPackage('package-slow')?.status).toBe('report-ready'));
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('分析任务耗时异常');
+      expect(warnings[0]).toContain('诊断包=package-slow.tgz');
+      expect(warnings[0]).toContain('状态=成功');
+      expect(warnings[0]).toContain('大小=1024 字节');
+      expect(warnings[0]).toContain('总耗时=10000.000 ms');
+      expect(warnings[0]).toContain('完整性校验=100.000 ms');
+      expect(warnings[0]).not.toContain(root);
+    } finally {
+      await service.close();
+      repository.close();
+    }
+  });
+
+  it('慢失败任务输出失败状态并保留原有中文失败持久化', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'analysis-task-slow-failure-'));
+    directories.push(root);
+    const repository = new WorkspaceRepository(join(root, 'analysis-center.db'));
+    repository.upsertPackage(packageRecord('package-fails-slowly', await createArchive(root, 'package-fails-slowly')));
+    const worker = new FakeAnalysisWorker();
+    const warnings: string[] = [];
+    const service = new AnalysisTaskService(repository, {
+      createWorker: () => worker,
+      logger: { warn: (message) => warnings.push(message) }
+    });
+
+    try {
+      await service.enqueue('package-fails-slowly');
+      await vi.waitFor(() => expect(repository.getPackage('package-fails-slowly')?.status).toBe('running'));
+      worker.emit('message', { type: 'completed', succeeded: false, errorMessage: '无法解压诊断包：归档损坏', runtimeTimings: runtimeTimings(12_000) });
+      await vi.waitFor(() => expect(repository.getPackage('package-fails-slowly')?.status).toBe('failed'));
+
+      expect(repository.listTasks()).toEqual([
+        expect.objectContaining({ status: 'failed', errorMessage: '分析引擎执行失败：无法解压诊断包：归档损坏' })
+      ]);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('诊断包=package-fails-slowly.tgz');
+      expect(warnings[0]).toContain('状态=失败');
+      expect(warnings[0]).not.toContain(root);
+    } finally {
+      await service.close();
+      repository.close();
+    }
+  });
+
+  it('慢任务日志输出失败不改变成功状态且队列继续执行', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'analysis-task-warning-failure-'));
+    directories.push(root);
+    const repository = new WorkspaceRepository(join(root, 'analysis-center.db'));
+    repository.upsertPackage(packageRecord('package-slow', await createArchive(root, 'package-slow')));
+    repository.upsertPackage(packageRecord('package-next', await createArchive(root, 'package-next')));
+    const workers: FakeAnalysisWorker[] = [];
+    const service = new AnalysisTaskService(repository, {
+      createWorker: () => { const worker = new FakeAnalysisWorker(); workers.push(worker); return worker; },
+      logger: { warn: () => { throw new Error('日志输出不可用'); } }
+    });
+
+    try {
+      await service.enqueue('package-slow');
+      await service.enqueue('package-next');
+      await vi.waitFor(() => expect(workers).toHaveLength(1));
+      workers[0]!.emit('message', { type: 'completed', succeeded: true, browserPath: join(root, 'slow.html'), analysisResult: successfulResult, runtimeTimings: runtimeTimings(10_000) });
+
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
+      expect(repository.getPackage('package-slow')?.status).toBe('report-ready');
+      workers[1]!.emit('message', { type: 'completed', succeeded: true, browserPath: join(root, 'next.html'), analysisResult: successfulResult, runtimeTimings: runtimeTimings(9_999) });
+      await vi.waitFor(() => expect(repository.getPackage('package-next')?.status).toBe('report-ready'));
+    } finally {
+      await service.close();
+      repository.close();
+    }
+  });
 });
 
 class FakeAnalysisWorker extends EventEmitter implements AnalysisWorker {
@@ -133,6 +230,18 @@ function packageRecord(id: string, sourcePath: string): DiagnosticPackage {
     status: 'pending',
     taskIds: [],
     caseId: `case-${id}`
+  };
+}
+
+function runtimeTimings(totalMs: number) {
+  return {
+    archiveValidationMs: 100,
+    archiveExtractionMs: 200,
+    sourceInventoryMs: 300,
+    sourceReadMs: 400,
+    pipelineAnalysisMs: 500,
+    reportRenderMs: 600,
+    totalMs
   };
 }
 

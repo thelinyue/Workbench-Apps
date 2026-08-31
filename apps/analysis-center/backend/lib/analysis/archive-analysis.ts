@@ -1,5 +1,6 @@
 import { lstat, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { gunzipSync } from 'node:zlib';
 import * as tar from 'tar';
 import extractZip from 'extract-zip';
@@ -39,53 +40,89 @@ export interface ArchiveAnalysisResult {
 export interface V1ArchiveAnalysisResult {
   result: V1AnalysisResult;
   browserPath: string;
+  runtimeTimings: AnalysisRuntimeTimings;
   performanceProfile?: PipelineProfile;
+}
+
+/**
+ * 发布运行时的低开销阶段耗时，只在主要边界读取时钟；逐文件和逐规则明细仍由开发 profiler 负责。
+ */
+export interface AnalysisRuntimeTimings {
+  archiveValidationMs: number;
+  archiveExtractionMs: number;
+  sourceInventoryMs: number;
+  sourceReadMs: number;
+  pipelineAnalysisMs: number;
+  reportRenderMs: number;
+  totalMs: number;
+}
+
+export function createAnalysisRuntimeTimings(): AnalysisRuntimeTimings {
+  return {
+    archiveValidationMs: 0,
+    archiveExtractionMs: 0,
+    sourceInventoryMs: 0,
+    sourceReadMs: 0,
+    pipelineAnalysisMs: 0,
+    reportRenderMs: 0,
+    totalMs: 0
+  };
 }
 
 /**
  * V1 归档入口只负责输入准备与单次来源读取；诊断语义完全由 analysis-v1 Pipeline 生成。
  * Legacy 的关键词扫描和旧报告函数保留在下方，不能从这个入口回退调用。
  */
-export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest, 'sourcePath' | 'extractDirectory' | 'onProgress'> & { profiler?: PipelineProfiler }): Promise<V1ArchiveAnalysisResult> {
+export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest, 'sourcePath' | 'extractDirectory' | 'onProgress'> & { profiler?: PipelineProfiler; runtimeTimings?: AnalysisRuntimeTimings }): Promise<V1ArchiveAnalysisResult> {
   const profiler = request.profiler;
-  const recognizeInput = async () => {
-    const format = getDiagnosticPackageFormat(request.sourcePath);
-    if (!format) throw new Error('仅支持 .tgz、.tgz.temp 或 .zip 格式的诊断包');
-    request.onProgress?.({ progress: 5, stage: 'identify-package', message: '正在验证诊断包' });
-    if (format === 'tgz') await assertDiagnosticArchiveIntegrity(request.sourcePath);
-    return format;
-  };
-  const archiveFormat = profiler
-    ? await profiler.measureAsync('input.recognition', recognizeInput)
-    : await recognizeInput();
-  const extractArchive = async () => {
-    await prepareExtractDirectory(request.extractDirectory);
-    try {
-      request.onProgress?.({ progress: 15, stage: 'identify-package', message: '正在解压诊断包' });
-      if (archiveFormat === 'tgz') await tar.x({ file: request.sourcePath, cwd: request.extractDirectory, gzip: true, strict: true });
-      else await extractZip(request.sourcePath, { dir: request.extractDirectory });
-    } catch (error) {
-      throw new Error(`无法解压诊断包：${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-  if (profiler) await profiler.measureAsync('archive.extract', extractArchive);
-  else await extractArchive();
-  request.onProgress?.({ progress: 35, stage: 'parse-system-events', message: '正在识别系统与存储日志' });
-  const files = await collectV1Sources(request.extractDirectory, profiler, (processedFiles, totalFiles) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), stage: 'parse-system-events', message: `正在读取日志（${processedFiles}/${totalFiles}）` }));
-  if (!Object.keys(files).length) throw new Error('无法识别日志包：未找到受支持的系统或存储日志');
-  request.onProgress?.({ progress: 55, stage: 'analyze-storage', message: '正在分析存储状态' });
-  const result = analyzeV1Sources({ sourceName: basename(request.sourcePath), files, profiler, onProgress: ({ processedFiles, totalFiles, progress }) => request.onProgress?.({ progress: 55 + Math.round(progress * 0.3), stage: 'analyze-storage', message: `正在解析日志（${processedFiles}/${totalFiles}）` }) });
-  request.onProgress?.({ progress: 85, stage: 'aggregate-anomalies', message: '正在聚合异常并关联诊断结论' });
-  const browserPath = join(request.extractDirectory, 'analysis-result.html');
-  const renderReport = () => writeFile(browserPath, renderV1Html(result), 'utf8');
-  if (profiler) await profiler.measureAsync('report.render', renderReport);
-  else await renderReport();
-  request.onProgress?.({ progress: 98, stage: 'form-conclusion', message: '正在形成诊断结论' });
-  return profiler ? { result, browserPath, performanceProfile: profiler.snapshot() } : { result, browserPath };
+  const runtimeTimings = request.runtimeTimings ?? createAnalysisRuntimeTimings();
+  const totalStartedAt = performance.now();
+  try {
+    const recognizeInput = async () => {
+      const format = getDiagnosticPackageFormat(request.sourcePath);
+      if (!format) throw new Error('仅支持 .tgz、.tgz.temp 或 .zip 格式的诊断包');
+      request.onProgress?.({ progress: 5, stage: 'identify-package', message: '正在验证诊断包' });
+      if (format === 'tgz') await measureRuntimeAsync(runtimeTimings, 'archiveValidationMs', () => assertDiagnosticArchiveIntegrity(request.sourcePath));
+      return format;
+    };
+    const archiveFormat = profiler
+      ? await profiler.measureAsync('input.recognition', recognizeInput)
+      : await recognizeInput();
+    const extractArchive = async () => {
+      await prepareExtractDirectory(request.extractDirectory);
+      try {
+        request.onProgress?.({ progress: 15, stage: 'identify-package', message: '正在解压诊断包' });
+        if (archiveFormat === 'tgz') await tar.x({ file: request.sourcePath, cwd: request.extractDirectory, gzip: true, strict: true });
+        else await extractZip(request.sourcePath, { dir: request.extractDirectory });
+      } catch (error) {
+        throw new Error(`无法解压诊断包：${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    await measureRuntimeAsync(runtimeTimings, 'archiveExtractionMs', () => profiler
+      ? profiler.measureAsync('archive.extract', extractArchive)
+      : extractArchive());
+    request.onProgress?.({ progress: 35, stage: 'parse-system-events', message: '正在识别系统与存储日志' });
+    const files = await collectV1Sources(request.extractDirectory, runtimeTimings, profiler, (processedFiles, totalFiles) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), stage: 'parse-system-events', message: `正在读取日志（${processedFiles}/${totalFiles}）` }));
+    if (!Object.keys(files).length) throw new Error('无法识别日志包：未找到受支持的系统或存储日志');
+    request.onProgress?.({ progress: 55, stage: 'analyze-storage', message: '正在分析存储状态' });
+    const result = measureRuntime(runtimeTimings, 'pipelineAnalysisMs', () => analyzeV1Sources({ sourceName: basename(request.sourcePath), files, profiler, onProgress: ({ processedFiles, totalFiles, progress }) => request.onProgress?.({ progress: 55 + Math.round(progress * 0.3), stage: 'analyze-storage', message: `正在解析日志（${processedFiles}/${totalFiles}）` }) }));
+    request.onProgress?.({ progress: 85, stage: 'aggregate-anomalies', message: '正在聚合异常并关联诊断结论' });
+    const browserPath = join(request.extractDirectory, 'analysis-result.html');
+    const renderReport = () => writeFile(browserPath, renderV1Html(result), 'utf8');
+    await measureRuntimeAsync(runtimeTimings, 'reportRenderMs', () => profiler
+      ? profiler.measureAsync('report.render', renderReport)
+      : renderReport());
+    request.onProgress?.({ progress: 98, stage: 'form-conclusion', message: '正在形成诊断结论' });
+    return profiler
+      ? { result, browserPath, runtimeTimings, performanceProfile: profiler.snapshot() }
+      : { result, browserPath, runtimeTimings };
+  } finally {
+    runtimeTimings.totalMs += elapsedSince(totalStartedAt);
+  }
 }
 
 /** 先收集并排序白名单文件，再逐一读取；这样进度稳定且结果不受文件系统枚举顺序影响。 */
-async function collectV1Sources(root: string, profiler?: PipelineProfiler, onProgress?: (processedFiles: number, totalFiles: number) => void): Promise<Record<string, string>> {
+async function collectV1Sources(root: string, runtimeTimings: AnalysisRuntimeTimings, profiler?: PipelineProfiler, onProgress?: (processedFiles: number, totalFiles: number) => void): Promise<Record<string, string>> {
   const files: Record<string, string> = {};
   const candidates: Array<{ path: string; source: NonNullable<ReturnType<typeof classifyV1Source>> }> = [];
   const visit = async (directory: string): Promise<void> => {
@@ -106,8 +143,9 @@ async function collectV1Sources(root: string, profiler?: PipelineProfiler, onPro
     // 保持原字符串数组的 UTF-16 排序语义，避免性能埋点改变 Evidence ID 和结果顺序。
     candidates.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
   };
-  if (profiler) await profiler.measureAsync('input.recognition', inventory);
-  else await inventory();
+  await measureRuntimeAsync(runtimeTimings, 'sourceInventoryMs', () => profiler
+    ? profiler.measureAsync('input.recognition', inventory)
+    : inventory());
 
   const readCandidates = async () => {
     for (let index = 0; index < candidates.length; index += 1) {
@@ -133,9 +171,28 @@ async function collectV1Sources(root: string, profiler?: PipelineProfiler, onPro
       onProgress?.(index + 1, candidates.length);
     }
   };
-  if (profiler) await profiler.measureAsync('source.read', readCandidates);
-  else await readCandidates();
+  await measureRuntimeAsync(runtimeTimings, 'sourceReadMs', () => profiler
+    ? profiler.measureAsync('source.read', readCandidates)
+    : readCandidates());
   return files;
+}
+
+type RuntimeStageName = Exclude<keyof AnalysisRuntimeTimings, 'totalMs'>;
+
+async function measureRuntimeAsync<T>(timings: AnalysisRuntimeTimings, stage: RuntimeStageName, operation: () => Promise<T>): Promise<T> {
+  const startedAt = performance.now();
+  try { return await operation(); }
+  finally { timings[stage] += elapsedSince(startedAt); }
+}
+
+function measureRuntime<T>(timings: AnalysisRuntimeTimings, stage: RuntimeStageName, operation: () => T): T {
+  const startedAt = performance.now();
+  try { return operation(); }
+  finally { timings[stage] += elapsedSince(startedAt); }
+}
+
+function elapsedSince(startedAt: number): number {
+  return Math.max(0, performance.now() - startedAt);
 }
 
 function renderV1Html(result: V1AnalysisResult): string {

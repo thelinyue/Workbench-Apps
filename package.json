@@ -9,7 +9,7 @@
     "typecheck:terminal": "tsc --noEmit -p apps/terminal/tsconfig.json",
     "test": "npm run test:analysis-center && npm run test:lvm-uncache-tool && npm run test:terminal && npm run test:log-rule-editor && npm run test:root",
     "test:analysis-center": "vitest run -c apps/analysis-center/vitest.config.ts",
-    "benchmark:analysis-center": "npm run benchmark --workspace @hephaestus-workbench/analysis-center",
+    "benchmark:analysis-center": "node node_modules/vite-node/vite-node.mjs apps/analysis-center/benchmark.ts",
     "test:lvm-uncache-tool": "node --test apps/lvm-uncache-tool/tests/*.test.js",
     "test:terminal": "vitest run -c apps/terminal/vitest.config.ts",
     "test:log-rule-editor": "cd /d apps/log-rule-editor && go test ./...",

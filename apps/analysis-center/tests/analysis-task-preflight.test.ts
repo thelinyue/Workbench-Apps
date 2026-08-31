@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as tar from 'tar';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceRepository } from '../backend/lib/data/workspace-repository';
 import type { DiagnosticPackage } from '../backend/lib/domain/diagnostic-package';
 import { AnalysisTaskService, type AnalysisWorker } from '../backend/lib/services/analysis-task-service';
@@ -11,8 +11,8 @@ import { AnalysisTaskService, type AnalysisWorker } from '../backend/lib/service
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
 
-describe('分析任务入队前预检', () => {
-  it('截断的 tgz 不创建任务也不启动 Worker', async () => {
+describe('分析任务归档校验', () => {
+  it('截断的 tgz 交给 Worker 校验并持久化中文失败原因', async () => {
     const root = await mkdtemp(join(tmpdir(), 'analysis-task-preflight-'));
     directories.push(root);
     const archivePath = join(root, 'device.tgz');
@@ -27,13 +27,24 @@ describe('分析任务入队前预检', () => {
       detectedAt: new Date().toISOString(), status: 'pending', taskIds: [], caseId: 'case-1'
     };
     repository.upsertPackage(item);
+    const worker = new FakeAnalysisWorker();
     let workerCount = 0;
-    const service = new AnalysisTaskService(repository, { createWorker: () => { workerCount += 1; return new FakeAnalysisWorker(); } });
+    const service = new AnalysisTaskService(repository, { createWorker: () => { workerCount += 1; return worker; } });
 
     try {
-      await expect(service.enqueue(item.id)).rejects.toThrow('诊断包文件不完整或已损坏，请重新导出或重新下载后再导入。');
-      expect(repository.listTasks()).toEqual([]);
-      expect(workerCount).toBe(0);
+      await service.enqueue(item.id);
+      await vi.waitFor(() => expect(workerCount).toBe(1));
+      worker.emit('message', { type: 'completed', succeeded: false, errorMessage: '诊断包文件不完整或已损坏，请重新导出或重新下载后再导入。' });
+
+      await vi.waitFor(() => expect(repository.listTasks()).toEqual([
+        expect.objectContaining({
+          packageId: item.id,
+          status: 'failed',
+          errorMessage: '分析引擎执行失败：诊断包文件不完整或已损坏，请重新导出或重新下载后再导入。'
+        })
+      ]));
+      const [failedTask] = repository.listTasks();
+      expect(repository.getAnalysisFailure(failedTask!.id)).toMatchObject({ stage: '校验诊断包' });
     } finally {
       await service.close();
       repository.close();

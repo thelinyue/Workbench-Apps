@@ -2,16 +2,28 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
+import type { AnalysisRuntimeTimings } from '../analysis/archive-analysis';
 import type { AnalyzerRuleCatalog } from '../analysis/log-analyzer';
-import { assertDiagnosticArchiveIntegrity } from '../analysis/archive-integrity';
-import { getDiagnosticPackageFormat } from '../domain/diagnostic-package';
 import type { AnalysisTaskRecord, AnalysisTaskStage, WorkspaceRepository } from '../data/workspace-repository';
 import type { AnalysisResult } from '../analysis-v1/pipeline';
 import type { PipelineProfile } from '../analysis-v1/pipeline-profiler';
 
+interface AnalysisWorkerMessage {
+  type?: 'progress' | 'completed';
+  progress?: number;
+  stage?: AnalysisTaskStage;
+  message?: string;
+  succeeded?: boolean;
+  browserPath?: string;
+  analysisResult?: AnalysisResult;
+  runtimeTimings?: AnalysisRuntimeTimings;
+  performanceProfile?: PipelineProfile;
+  errorMessage?: string;
+}
+
 export interface AnalysisWorker {
   terminate(): Promise<number>;
-  on(event: 'message', listener: (result: { type?: 'progress' | 'completed'; progress?: number; stage?: AnalysisTaskStage; message?: string; succeeded?: boolean; browserPath?: string; analysisResult?: AnalysisResult; performanceProfile?: PipelineProfile; errorMessage?: string }) => void): this;
+  on(event: 'message', listener: (result: AnalysisWorkerMessage) => void): this;
   once(event: 'error', listener: (error: Error) => void): this;
   once(event: 'exit', listener: (code: number) => void): this;
 }
@@ -19,8 +31,11 @@ export interface AnalysisWorker {
 export interface AnalysisTaskServiceOptions {
   createWorker?: (url: URL, options: { workerData: { sourcePath: string; extractDirectory: string; performanceProfiling?: boolean } }) => AnalysisWorker;
   notify?: (notification: { title: string; body: string; windowKey: 'main'; activationPayload: { kind: 'result' | 'failure'; packageId: string } }) => void;
+  logger?: Pick<Console, 'warn'>;
   performanceProfiling?: { onCompleted: (profile: PipelineProfile) => void };
 }
+
+const SLOW_ANALYSIS_THRESHOLD_MS = 10_000;
 
 /** 任务按创建先后执行，保证界面显示的“前方任务数”与实际调度顺序一致。 */
 export function selectNextQueuedTask(tasks: AnalysisTaskRecord[]): AnalysisTaskRecord | undefined {
@@ -61,7 +76,7 @@ export class AnalysisTaskService extends EventEmitter {
     const diagnosticPackage = this.repository.getPackage(packageId);
     if (!diagnosticPackage) throw new Error('找不到要分析的诊断包');
     if (diagnosticPackage.status === 'running' || diagnosticPackage.status === 'queued') throw new Error('该诊断包已经在分析队列中');
-    if (getDiagnosticPackageFormat(diagnosticPackage.sourcePath) === 'tgz') await assertDiagnosticArchiveIntegrity(diagnosticPackage.sourcePath);
+    // 完整性校验由分析 Worker 在解压前唯一执行，避免 backend 主线程和 Worker 重复读取整个 TGZ。
     const task: AnalysisTaskRecord = { id: randomUUID(), packageId, scope, status: 'queued', createdAt: new Date().toISOString(), progress: 0, stage: 'identify-package', message: scope === 'storage' ? '等待存储健康分析' : '等待综合分析' };
     diagnosticPackage.status = 'queued';
     diagnosticPackage.taskIds = [...diagnosticPackage.taskIds, task.id];
@@ -144,6 +159,7 @@ export class AnalysisTaskService extends EventEmitter {
   private async run(task: AnalysisTaskRecord): Promise<void> {
     const diagnosticPackage = this.repository.getPackage(task.packageId);
     if (!diagnosticPackage) return;
+    let runtimeTimings: AnalysisRuntimeTimings | undefined;
     this.activeTaskId = task.id;
     const runningTask = { ...task, status: 'running' as const, startedAt: new Date().toISOString(), progress: 0, message: '正在准备诊断包' };
     diagnosticPackage.status = 'running';
@@ -159,6 +175,7 @@ export class AnalysisTaskService extends EventEmitter {
         this.repository.upsertTask({ ...current, progress: Math.max(current.progress, progress), stage, message });
         this.emit('changed');
       });
+      runtimeTimings = output.runtimeTimings;
       if (this.cancelledTaskIds.has(task.id)) return;
       if (this.options.performanceProfiling && !output.performanceProfile) throw new Error('分析 Worker 未返回已启用的性能采集结果');
       const persistSuccess = () => {
@@ -186,8 +203,10 @@ export class AnalysisTaskService extends EventEmitter {
         windowKey: 'main',
         activationPayload: { kind: 'result', packageId: diagnosticPackage.id }
       });
+      this.reportSlowAnalysis(diagnosticPackage.displayName, diagnosticPackage.sourceSizeBytes, '成功', runtimeTimings);
     } catch (error) {
       if (this.cancelledTaskIds.has(task.id)) return;
+      if (error instanceof AnalysisWorkerFailure) runtimeTimings = error.runtimeTimings;
       const errorMessage = error instanceof Error ? error.message : String(error);
       const failureMessage = `分析引擎执行失败：${errorMessage}`;
       diagnosticPackage.status = 'failed';
@@ -202,6 +221,7 @@ export class AnalysisTaskService extends EventEmitter {
         windowKey: 'main',
         activationPayload: { kind: 'failure', packageId: diagnosticPackage.id }
       });
+      this.reportSlowAnalysis(diagnosticPackage.displayName, diagnosticPackage.sourceSizeBytes, '失败', runtimeTimings);
     } finally {
       const termination = this.activeTermination;
       if (termination) await termination.catch(() => undefined);
@@ -213,23 +233,47 @@ export class AnalysisTaskService extends EventEmitter {
     }
   }
 
-  private runWorker(sourcePath: string, extractDirectory: string, onProgress: (progress: number, stage: AnalysisTaskStage, message: string) => void): Promise<{ browserPath: string; result: AnalysisResult; performanceProfile?: PipelineProfile }> {
+  private runWorker(sourcePath: string, extractDirectory: string, onProgress: (progress: number, stage: AnalysisTaskStage, message: string) => void): Promise<{ browserPath: string; result: AnalysisResult; runtimeTimings?: AnalysisRuntimeTimings; performanceProfile?: PipelineProfile }> {
     return new Promise((resolve, reject) => {
       // 分析中心 backend 以 ESM 发布，必须从实际 entry URL 定位同级 Worker，不能依赖 CommonJS 的 __dirname。
       const workerData = { sourcePath, extractDirectory, ...(this.options.performanceProfiling ? { performanceProfiling: true } : {}) };
       const worker = (this.options.createWorker ?? createDefaultAnalysisWorker)(new URL('./analysis-worker.js', import.meta.url), { workerData });
       this.activeWorker = worker;
       let settled = false;
-      const fail = (error: Error) => { if (!settled) { settled = true; reject(error); } };
-      const succeed = (browserPath: string, result: AnalysisResult, performanceProfile?: PipelineProfile) => { if (!settled) { settled = true; resolve({ browserPath, result, performanceProfile }); } };
+      const fail = (error: Error, runtimeTimings?: AnalysisRuntimeTimings) => { if (!settled) { settled = true; reject(runtimeTimings ? new AnalysisWorkerFailure(error.message, runtimeTimings) : error); } };
+      const succeed = (browserPath: string, result: AnalysisResult, runtimeTimings?: AnalysisRuntimeTimings, performanceProfile?: PipelineProfile) => { if (!settled) { settled = true; resolve({ browserPath, result, runtimeTimings, performanceProfile }); } };
       this.activeCancellation = () => fail(new Error('任务已取消'));
-      worker.on('message', (result: { type?: 'progress' | 'completed'; progress?: number; stage?: AnalysisTaskStage; message?: string; succeeded?: boolean; browserPath?: string; analysisResult?: AnalysisResult; performanceProfile?: PipelineProfile; errorMessage?: string }) => {
+      worker.on('message', (result: AnalysisWorkerMessage) => {
         if (result.type === 'progress' && typeof result.progress === 'number' && result.stage && result.message) { onProgress(result.progress, result.stage, result.message); return; }
-        if (result.type === 'completed' || result.succeeded !== undefined) result.succeeded && result.browserPath && result.analysisResult ? succeed(result.browserPath, result.analysisResult, result.performanceProfile) : fail(new Error(result.errorMessage ?? '分析引擎没有返回诊断结果'));
+        if (result.type === 'completed' || result.succeeded !== undefined) result.succeeded && result.browserPath && result.analysisResult
+          ? succeed(result.browserPath, result.analysisResult, result.runtimeTimings, result.performanceProfile)
+          : fail(new Error(result.errorMessage ?? '分析引擎没有返回诊断结果'), result.runtimeTimings);
       });
       worker.once('error', (error) => fail(new Error(`分析引擎工作线程异常：${error.message}`)));
       worker.once('exit', (code) => { if (code !== 0) fail(new Error(`分析引擎工作线程异常退出，退出码：${code}`)); });
     });
+  }
+
+  /** 只记录异常慢任务；日志设施失败也不能改写已持久化的业务状态或阻断后续队列。 */
+  private reportSlowAnalysis(displayName: string, sourceSizeBytes: number | undefined, status: '成功' | '失败', timings: AnalysisRuntimeTimings | undefined): void {
+    if (!timings || timings.totalMs < SLOW_ANALYSIS_THRESHOLD_MS) return;
+    const size = sourceSizeBytes === undefined ? '未知' : `${sourceSizeBytes} 字节`;
+    try {
+      (this.options.logger ?? console).warn([
+        `分析任务耗时异常：诊断包=${displayName}`,
+        `状态=${status}`,
+        `大小=${size}`,
+        `总耗时=${formatDuration(timings.totalMs)}`,
+        `完整性校验=${formatDuration(timings.archiveValidationMs)}`,
+        `解压=${formatDuration(timings.archiveExtractionMs)}`,
+        `文件清单=${formatDuration(timings.sourceInventoryMs)}`,
+        `日志读取=${formatDuration(timings.sourceReadMs)}`,
+        `解析与规则=${formatDuration(timings.pipelineAnalysisMs)}`,
+        `报告生成=${formatDuration(timings.reportRenderMs)}`
+      ].join('；'));
+    } catch (error) {
+      console.error(`记录分析任务耗时失败：${errorMessage(error)}`);
+    }
   }
 
   private notify(notification: Parameters<NonNullable<AnalysisTaskServiceOptions['notify']>>[0]): void {
@@ -299,8 +343,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function formatDuration(durationMs: number): string {
+  return `${durationMs.toFixed(3)} ms`;
+}
+
+class AnalysisWorkerFailure extends Error {
+  public constructor(message: string, public readonly runtimeTimings: AnalysisRuntimeTimings) {
+    super(message);
+  }
+}
+
 /** Worker 只返回用户可读的错误，主线程据此归类失败阶段，避免泄露不稳定的底层堆栈。 */
 function inferFailureStage(message: string): string {
+  if (message.includes('诊断包文件')) return '校验诊断包';
   if (message.includes('解压')) return '解压';
   if (message.includes('识别日志包')) return '识别来源';
   if (message.includes('读取') || message.includes('解析')) return '解析事件';

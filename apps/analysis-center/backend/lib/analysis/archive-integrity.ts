@@ -3,7 +3,7 @@ import * as tar from 'tar';
 export const INVALID_DIAGNOSTIC_ARCHIVE_MESSAGE = '诊断包文件不完整或已损坏，请重新导出或重新下载后再导入。';
 
 /**
- * 在分析任务入队前完整读取 gzip/tar 归档，尽早发现下载未完成或文件被截断的问题。
+ * 在分析 Worker 解压前完整读取 gzip/tar 归档，尽早发现下载未完成或文件被截断的问题。
  * 这里只校验归档，不会解压、修改或删除用户的原始诊断包。
  */
 export async function assertDiagnosticArchiveIntegrity(sourcePath: string): Promise<void> {
