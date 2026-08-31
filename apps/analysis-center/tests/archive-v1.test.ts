@@ -1,8 +1,10 @@
+import { createWriteStream } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import * as tar from 'tar';
+import yazl from 'yazl';
 import { afterEach, expect, it } from 'vitest';
 import { runV1ArchiveAnalysis } from '../backend/lib/analysis/archive-analysis';
 
@@ -76,6 +78,29 @@ it('V1 分析会解压并读取 gzip 轮转内核日志', async () => {
   await expect(readFile(existingPath, 'utf8')).resolves.toBe('keep');
 });
 
+it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-prefixed-zip-'));
+  directories.push(root);
+  const archivePath = join(root, 'nas_server_log_fixture.zip');
+  await createZip(archivePath, [
+    { name: 'DEVICE_20260830192714_syslog', content: '2026-08-30T19:27:14+08:00 kernel: Buffer I/O error on dev sdc' },
+    { name: 'DEVICE_20260830193155_dmsg.log.gz', content: gzipSync('2026-08-30T19:31:55+08:00 kernel: Buffer I/O error on dev sdd') },
+    { name: 'ai_engine_crash.xlog.gz', content: gzipSync('2026-08-30T19:32:00+08:00 kernel: Buffer I/O error on dev sdz') }
+  ]);
+
+  const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+
+  expect(output.result.metadata.processedFiles).toBe(2);
+  expect(output.result.metadata.analyzerVersion).toBe('1.1.0');
+  expect(output.result.findings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'storage.io_error', affectedResources: ['/dev/sdc'] }),
+    expect.objectContaining({ type: 'storage.io_error', affectedResources: ['/dev/sdd'] })
+  ]));
+  expect(output.result.findings).not.toEqual(expect.arrayContaining([
+    expect.objectContaining({ affectedResources: expect.arrayContaining(['/dev/sdz']) })
+  ]));
+});
+
 it('V1 分析在解压目标不是目录时返回中文错误', async () => {
   const root = await mkdtemp(join(tmpdir(), 'analysis-v1-invalid-extract-'));
   directories.push(root);
@@ -87,3 +112,12 @@ it('V1 分析在解压目标不是目录时返回中文错误', async () => {
 
   await expect(runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: extractPath })).rejects.toThrow('无法准备诊断包解压目录');
 });
+
+async function createZip(archivePath: string, files: Array<{ name: string; content: string | Buffer }>): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const zip = new yazl.ZipFile();
+    zip.outputStream.pipe(createWriteStream(archivePath)).on('close', resolve).on('error', reject);
+    for (const file of files) zip.addBuffer(Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content), file.name);
+    zip.end();
+  });
+}

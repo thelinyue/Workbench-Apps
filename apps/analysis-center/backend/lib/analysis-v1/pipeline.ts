@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import rulePackJson from './event-rule-pack.json';
+import { classifyV1Source, type V1SourceType } from './source-classifier';
 
 export type Severity = 'critical' | 'warning' | 'info';
 export type Confidence = 'confirmed' | 'high' | 'medium' | 'low';
@@ -19,9 +20,8 @@ interface RaidAssessment { resource: string; level?: string; expectedMembers?: n
 
 const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume'])), regex: z.string(), type: z.string() })) });
 const rulePack = rulePackSchema.parse(rulePackJson);
-type V1Source = 'kernel' | 'sysinfo' | 'mdstat' | 'ugvolume';
 type CompiledEventRule = (typeof rulePack.eventRules)[number] & { pattern: RegExp };
-const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume'] as V1Source[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1Source, CompiledEventRule[]>;
+const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume'] as V1SourceType[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1SourceType, CompiledEventRule[]>;
 // 内核来源的大多数行是无异常心跳；该集合覆盖当前所有 kernel 规则的触发词，预筛选命中后仍由原规则决定诊断结果。
 const kernelEventCandidate = /\b(?:error|timeout|timed out|reset controller|device not ready|hard resetting|failed|failure|link(?: is)? down|not recognized|not found|medium|uncorrectable|panic|out of memory|oom-kill|killed process|watchdog|uncleanly|orphan inode|recovery complete|corrupt\w*|read-?only|blocked for more than|bch_data_insert_keys)\b/i;
 
@@ -38,7 +38,7 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   const deviceIdentities = new Map<string, DeviceIdentity>();
   let processedLines = 0;
   let evidenceNumber = 0;
-  const sources = Object.entries(input.files).filter(([sourceFile]) => classify(sourceFile));
+  const sources = Object.entries(input.files).filter(([sourceFile]) => classifyV1Source(sourceFile));
   let lastProgress = -1;
   const reportProgress = (processedFiles: number, processedCharacters = 0, currentLength = 0, force = false) => {
     const progress = Math.min(100, Math.floor(((processedFiles + (currentLength ? processedCharacters / currentLength : 0)) / Math.max(sources.length, 1)) * 100));
@@ -53,7 +53,7 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
 
   for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
     const [sourceFile, content] = sources[sourceIndex];
-    const source = classify(sourceFile);
+    const source = classifyV1Source(sourceFile);
     if (!source) continue;
     if (source === 'sysinfo') {
       parseSysinfo(content, sourceFile, add, deviceIdentities);
@@ -116,15 +116,14 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   const findings = aggregateFindings(events, evidence, topology);
   const deviceAssessments = buildDeviceAssessments(deviceIdentities, events);
   const { diagnoses, recommendations } = composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments);
-  const missingData = ['sysinfo', 'mdstat'].filter((source) => !sources.some(([file]) => classify(file) === source));
+  const missingData = ['sysinfo', 'mdstat'].filter((source) => !sources.some(([file]) => classifyV1Source(file) === source));
   const ended = new Date();
   const criticalCount = diagnoses.filter((item) => item.severity === 'critical').length;
   const warningCount = diagnoses.filter((item) => item.severity === 'warning').length;
-  return { schemaVersion: 1, id: `analysis-${started.getTime()}`, status: missingData.length ? 'partial' : 'completed', summary: { criticalCount, warningCount, infoCount: diagnoses.filter((item) => item.severity === 'info').length, primaryDiagnosisId: diagnoses[0]?.id, complete: missingData.length === 0 }, diagnoses, findings, evidence, deviceAssessments, recommendations, metadata: { source: input.sourceName, startTime: started.toISOString(), completeTime: ended.toISOString(), duration: ended.getTime() - started.getTime(), processedFiles: sources.length, processedLines, processedEvents: events.length, analyzerVersion: '1.0.0', rulePackVersion: rulePack.version, missingData } };
+  return { schemaVersion: 1, id: `analysis-${started.getTime()}`, status: missingData.length ? 'partial' : 'completed', summary: { criticalCount, warningCount, infoCount: diagnoses.filter((item) => item.severity === 'info').length, primaryDiagnosisId: diagnoses[0]?.id, complete: missingData.length === 0 }, diagnoses, findings, evidence, deviceAssessments, recommendations, metadata: { source: input.sourceName, startTime: started.toISOString(), completeTime: ended.toISOString(), duration: ended.getTime() - started.getTime(), processedFiles: sources.length, processedLines, processedEvents: events.length, analyzerVersion: '1.1.0', rulePackVersion: rulePack.version, missingData } };
 }
 
 function forEachLine(content: string, callback: (line: string, endOffset: number) => void): void { let start = 0; for (let index = 0; index <= content.length; index += 1) { if (index !== content.length && content.charCodeAt(index) !== 10) continue; const end = index > start && content.charCodeAt(index - 1) === 13 ? index - 1 : index; callback(content.slice(start, end), index); start = index + 1; } }
-function classify(file: string): V1Source | undefined { const name = file.replaceAll('\\', '/').toLowerCase(); if (name.endsWith('sysinfo.json')) return 'sysinfo'; if (name.endsWith('mdstat.log')) return 'mdstat'; if (name.endsWith('ugvolume.log')) return 'ugvolume'; return /(?:^|\/)(?:kern(?:\.log(?:\.\d+)?)?(?:\.gz)?|syslog(?:\.\d+)?(?:\.gz)?|journal[^/]*|dmesg[^/]*)$/.test(name) ? 'kernel' : undefined; }
 function parseTimestamp(line: string): { timestamp?: string; precision: TimestampPrecision; confidence: Confidence } { const match = line.match(/\b(20\d\d-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?)\b/); return match ? { timestamp: new Date(match[1].replace(' ', 'T')).toISOString(), precision: 'exact', confidence: 'confirmed' } : { precision: 'unknown', confidence: 'low' }; }
 /**
  * ATA、SCSI 与 BTRFS 错误经常分布在连续多行中。这里只在同一文件、最多 12 行的错误块内

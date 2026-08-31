@@ -15,6 +15,7 @@ import bootstrapCss from './static/bootstrap.min.css?raw';
 import bootstrapScript from './static/bootstrap.bundle.min.js?raw';
 import { analyzeStructuredExtract, type StructuredAnalysis } from './structured-analysis';
 import { analyzeV1Sources, type AnalysisResult as V1AnalysisResult } from '../analysis-v1/pipeline';
+import { classifyV1Source } from '../analysis-v1/source-classifier';
 import { selectImportantFindings } from '../../../shared/finding-presentation';
 import type { AnalysisTaskStage } from '../data/workspace-repository';
 
@@ -76,7 +77,7 @@ async function collectV1Sources(root: string, onProgress?: (processedFiles: numb
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) { await visit(path); continue; }
-      if (!entry.isFile() || !isV1Source(entry.name)) continue;
+      if (!entry.isFile() || !classifyV1Source(entry.name)) continue;
       candidates.push(path);
     }
   };
@@ -92,10 +93,6 @@ async function collectV1Sources(root: string, onProgress?: (processedFiles: numb
     onProgress?.(index + 1, candidates.length);
   }
   return files;
-}
-
-function isV1Source(name: string): boolean {
-  return /^(?:sysinfo\.json|mdstat\.log|ugvolume\.log|kern(?:\.log(?:\.\d+)?)?(?:\.gz)?|syslog(?:\.\d+)?(?:\.gz)?|journal.*|dmesg.*)$/i.test(name);
 }
 
 function renderV1Html(result: V1AnalysisResult): string {
