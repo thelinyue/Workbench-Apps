@@ -1,0 +1,2 @@
+INFO 2026-02-04 04:01:01 storage_serv/job/ugvolume/private.go:257 pool[pool3] /dev/md2 assemble by 1 disks
+ERROR 2026-02-04 04:01:35 storage_serv/job/ugvolume/private.go:360 DoMount(dev:/dev/mapper/UG_POOL3-volume1,mntPath:/volume3,fsType:ext4) error: mount: /volume3: can't read superblock on /dev/mapper/UG_POOL3-volume1.

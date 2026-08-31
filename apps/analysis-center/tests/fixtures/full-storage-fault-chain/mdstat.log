@@ -1,0 +1,2 @@
+md2 : active raid1 sda2[0]
+      3890885632 blocks super 1.2 [1/1] [U]

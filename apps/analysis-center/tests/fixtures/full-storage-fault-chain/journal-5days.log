@@ -1,0 +1,4 @@
+2026-02-04 04:00:57 kernel: ata1.00: failed command: READ FPDMA QUEUED
+2026-02-04 04:00:57 kernel: ata1.00: error: { UNC }
+2026-02-04 04:00:57 kernel: I/O error, dev sda, sector 32266240 op 0x0:(READ)
+2026-02-04 04:01:01 kernel: Buffer I/O error on dev dm-1, logical block 0

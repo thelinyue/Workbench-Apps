@@ -1,3 +1,4 @@
 node_modules/
 apps/**/dist/
 *.log
+!apps/analysis-center/tests/fixtures/full-storage-fault-chain/*.log
