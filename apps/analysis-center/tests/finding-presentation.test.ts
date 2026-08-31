@@ -7,6 +7,10 @@ describe('重要发现展示文案', () => {
     ['storage.media_error', '磁盘介质读写错误'],
     ['storage.device_unrecognized', '硬盘未被系统识别'],
     ['storage.nvme_error', 'NVMe 固态硬盘异常'],
+    ['storage.nvme_timeout', 'NVMe 请求超时'],
+    ['storage.io_hung', '存储任务长时间阻塞'],
+    ['storage.bcache_stall', 'bcache 写入路径阻塞线索'],
+    ['system.shutdown_sync_timeout', '关机同步存储数据超时'],
     ['storage.ata_error', 'SATA/ATA 通信异常'],
     ['filesystem.error', '文件系统错误']
   ])('将 %s 转换为中文问题名称', (type, title) => {
@@ -28,5 +32,11 @@ describe('重要发现展示文案', () => {
     expect(presentation.advice).toContain('工程师');
     expect(presentation.technicalEvent).toBe('storage.future_event');
     expect(presentation.riskLabel).toBe('提示');
+  });
+
+  it('明确 bcache 堆栈线索不能单独证明缓存盘故障', () => {
+    const presentation = presentFinding({ type: 'storage.bcache_stall', severity: 'warning', occurrenceCount: 1 });
+
+    expect(presentation.meaning).toContain('不能单独证明缓存盘故障');
   });
 });

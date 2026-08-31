@@ -21,6 +21,9 @@ const findingCopies: Record<string, FindingCopy> = {
   'storage.device_unrecognized': { title: '硬盘未被系统识别', meaning: '系统未能正常识别硬盘，可能与硬盘、槽位或连接状态有关。', advice: '请联系工程师检查硬盘、槽位和连接状态，避免在未确认前继续写入数据。' },
   'storage.media_error': { title: '磁盘介质读写错误', meaning: '存储设备报告无法更正的读写错误，存在数据访问风险。', advice: '尽快备份重要数据，并检查硬盘 SMART 健康状态；必要时联系工程师更换硬盘。' },
   'storage.nvme_error': { title: 'NVMe 固态硬盘异常', meaning: '系统记录到 NVMe 固态硬盘读写或通信错误，可能影响数据访问稳定性。', advice: '尽快备份重要数据，并检查固态硬盘健康、温度和连接状态。' },
+  'storage.nvme_timeout': { title: 'NVMe 请求超时', meaning: 'NVMe 请求未在预期时间内完成并被系统中止，可能影响缓存或存储访问。', advice: '检查 NVMe 健康状态、温度、固件和连接；如反复出现，请联系工程师进一步检查。' },
+  'storage.io_hung': { title: '存储任务长时间阻塞', meaning: 'RAID 或缓存相关内核任务超过系统设定时间仍未完成，期间存储访问可能无响应。', advice: '保留日志并联系工程师检查关联阵列、缓存设备及底层存储状态。' },
+  'storage.bcache_stall': { title: 'bcache 写入路径阻塞线索', meaning: '异常堆栈涉及 bcache 数据写入路径，但该线索不能单独证明缓存盘故障。', advice: '结合相邻的任务阻塞、设备超时和硬件健康信息进一步排查。' },
   'storage.smart_risk': { title: '硬盘健康指标异常', meaning: '硬盘 SMART 健康指标出现风险值，提示存储介质可能存在故障隐患。', advice: '尽快备份重要数据，并安排工程师核验硬盘健康状态。' },
   'filesystem.error': { title: '文件系统错误', meaning: '文件系统记录到错误，可能影响文件读取、写入或挂载。', advice: '请联系工程师检查文件系统；不要自行执行可能写入数据的修复命令。' },
   'filesystem.read_only': { title: '文件系统已切换为只读', meaning: '系统为保护数据将文件系统切换为只读，后续写入可能失败。', advice: '尽快备份可读取的数据，并联系工程师检查文件系统和底层存储。' },
@@ -30,7 +33,8 @@ const findingCopies: Record<string, FindingCopy> = {
   'system.oom': { title: '系统内存耗尽', meaning: '系统可用内存不足，可能导致服务响应变慢或失败。', advice: '请联系工程师检查内存使用情况和异常进程。' },
   'system.oom_killer': { title: '系统因内存不足终止进程', meaning: '系统为释放内存终止了进程，相关服务可能已中断。', advice: '请联系工程师检查被终止的服务和内存使用情况。' },
   'system.watchdog': { title: '系统检测到卡死', meaning: '系统检测到内核或处理器长时间无响应，可能影响服务可用性。', advice: '请联系工程师保留日志并检查系统与硬件状态。' },
-  'system.unclean_shutdown': { title: '检测到异常关机线索', meaning: '日志显示系统可能未按正常流程关机，需结合现场情况确认原因。', advice: '检查电源、设备运行记录和文件系统状态；如反复发生请联系工程师。' }
+  'system.unclean_shutdown': { title: '检测到异常关机线索', meaning: '日志显示系统可能未按正常流程关机，需结合现场情况确认原因。', advice: '检查电源、设备运行记录和文件系统状态；如反复发生请联系工程师。' },
+  'system.shutdown_sync_timeout': { title: '关机同步存储数据超时', meaning: '关机阶段文件系统和块设备未在预期时间内完成数据同步，数据可能未及时落盘。', advice: '重新启动后检查文件系统和存储状态，并结合关机前后的设备异常日志进一步排查。' }
 };
 
 const riskLabels = { critical: '严重', warning: '警告', info: '提示' } as const;

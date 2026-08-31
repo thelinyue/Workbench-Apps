@@ -448,4 +448,56 @@ describe('V1 统一诊断分析', () => {
     })]));
     expect(result.diagnoses).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'raid.array.degraded' })]));
   });
+
+  it('将存储卡死关键日志转换为独立 Finding，但不直接生成根因诊断', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'storage-stall-events.tgz',
+      files: {
+        'journal-5days.log': [
+          '2026-08-30T18:39:57+08:00 host kernel: nvme nvme0: I/O tag 732 (02dc) opcode 0x0 (I/O Cmd) QID 1 timeout, aborting req_op:FLUSH(2) size:0',
+          '2026-08-30T18:40:01+08:00 host kernel: INFO: task md2_raid1:2684 blocked for more than 120 seconds.',
+          '2026-08-30T18:40:02+08:00 host kernel: INFO: task jbd2/bcache0-8:2921 blocked for more than 120 seconds.',
+          '2026-08-30T18:40:03+08:00 host kernel: Workqueue: bcache bch_data_insert_keys [bcache]',
+          '2026-08-30T18:40:30+08:00 host systemd-shutdown[1]: Syncing filesystems and block devices - timed out, issuing SIGKILL...'
+        ].join('\n')
+      }
+    });
+
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'storage.nvme_timeout:nvme0', severity: 'warning', affectedResources: ['nvme0'] }),
+      expect.objectContaining({ id: 'storage.io_hung:md2', severity: 'warning', affectedResources: ['md2'] }),
+      expect.objectContaining({ id: 'storage.io_hung:bcache0', severity: 'warning', affectedResources: ['bcache0'] }),
+      expect.objectContaining({ id: 'storage.bcache_stall:system', severity: 'warning', affectedResources: [] }),
+      expect.objectContaining({ id: 'system.shutdown_sync_timeout:system', severity: 'warning', affectedResources: [] })
+    ]));
+    expect(result.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventType: 'storage.nvme_timeout', resource: 'nvme0' }),
+      expect.objectContaining({ eventType: 'storage.io_hung', resource: 'md2' }),
+      expect.objectContaining({ eventType: 'storage.io_hung', resource: 'bcache0' }),
+      expect.objectContaining({ eventType: 'storage.bcache_stall', resource: undefined }),
+      expect.objectContaining({ eventType: 'system.shutdown_sync_timeout', resource: undefined })
+    ]));
+    expect(result.diagnoses).toEqual([]);
+  });
+
+  it('不把相似但低信号的关机和工作队列日志识别为存储卡死事件', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'storage-stall-noise.tgz',
+      files: {
+        'journal-5days.log': [
+          '2026-08-30T18:40:00+08:00 host kernel: nvme nvme0: 8/0/0 default/read/poll queues',
+          '2026-08-30T18:40:01+08:00 host kernel: Workqueue: events bch_data_insert_keys [bcache]',
+          '2026-08-30T18:40:02+08:00 host systemd[1]: volume.mount: Mount process exited, target is busy',
+          '2026-08-30T18:40:03+08:00 host systemd-shutdown[1]: Processes still around after final SIGKILL. Entering emergency mode.'
+        ].join('\n')
+      }
+    });
+
+    expect(result.findings).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'storage.nvme_timeout' }),
+      expect.objectContaining({ type: 'storage.io_hung' }),
+      expect.objectContaining({ type: 'storage.bcache_stall' }),
+      expect.objectContaining({ type: 'system.shutdown_sync_timeout' })
+    ]));
+  });
 });

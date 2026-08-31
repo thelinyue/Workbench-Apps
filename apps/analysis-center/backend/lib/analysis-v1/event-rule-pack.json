@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.4.0",
+  "version": "1.5.0",
   "eventRules": [
     {"id":"storage.io.blk_update","sources":["kernel"],"regex":"blk_update_request: I/O error, dev (?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
     {"id":"storage.io.buffer","sources":["kernel"],"regex":"Buffer I/O error on dev (?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
@@ -19,6 +19,11 @@
     {"id":"storage.scsi.medium","sources":["kernel"],"regex":"(?:medium error|uncorrectable)","type":"storage.media_error"},
     {"id":"raid.member.failed.kernel","sources":["kernel"],"regex":"md\\/raid:(?<array>md\\d+): Disk failure on (?<device>sd[a-z]+)\\d*, disabling device","type":"raid.member_failed"},
     {"id":"storage.nvme.error","sources":["kernel"],"regex":"nvme.*(?:I/O Error|error)","type":"storage.nvme_error"},
+    {"id":"storage.nvme.timeout_aborting","sources":["kernel"],"regex":"\\bnvme\\s+(?<controller>nvme\\d+):.*\\bI/O\\b.*\\btimeout,\\s*aborting(?:\\s+req_op:(?<operation>[A-Z]+))?","type":"storage.nvme_timeout"},
+    {"id":"storage.task.blocked.md","sources":["kernel"],"regex":"INFO:\\s+task\\s+(?<array>md\\d+)_raid\\d+:\\d+\\s+blocked for more than (?<seconds>\\d+) seconds","type":"storage.io_hung"},
+    {"id":"storage.task.blocked.jbd2_bcache","sources":["kernel"],"regex":"INFO:\\s+task\\s+jbd2\\/(?<cache>bcache\\d+)-\\d+:\\d+\\s+blocked for more than (?<seconds>\\d+) seconds","type":"storage.io_hung"},
+    {"id":"storage.bcache.insert_keys_stall","sources":["kernel"],"regex":"Workqueue:\\s+bcache\\s+bch_data_insert_keys(?:\\s+\\[bcache\\])?","type":"storage.bcache_stall"},
+    {"id":"system.shutdown.sync_timeout","sources":["kernel"],"regex":"systemd-shutdown(?:\\[\\d+\\])?:.*Syncing filesystems and block devices - timed out\\b","type":"system.shutdown_sync_timeout"},
     {"id":"system.kernel.panic","sources":["kernel"],"regex":"Kernel panic","type":"system.kernel_panic"},
     {"id":"system.oom","sources":["kernel"],"regex":"Out of memory","type":"system.oom"},
     {"id":"system.oom_killer","sources":["kernel"],"regex":"oom-kill|Killed process","type":"system.oom_killer"},
