@@ -149,7 +149,7 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           const enabled = readBoolean(value, 'enabled');
           const autoAnalyzeEnabled = readBoolean(value, 'autoAnalyzeEnabled');
           if (enabled && !directory) throw new Error('启用监控前请选择目录');
-          repository.saveMonitorSettings({ directory, enabled, autoAnalyzeEnabled, scanIntervalMinutes: readInteger(value, 'scanIntervalMinutes') });
+          repository.saveMonitorSettings({ directory, enabled, autoAnalyzeEnabled, scanIntervalSeconds: readInteger(value, 'scanIntervalSeconds') });
           await monitor.reconfigure();
           return undefined;
         }

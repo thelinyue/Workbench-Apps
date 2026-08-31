@@ -68,23 +68,24 @@ describe('工作台 SQLite 数据仓储', () => {
     repository.close();
   });
 
-  it('默认每分钟扫描并开启自动分析，只接受 1 到 3 分钟', async () => {
+  it('默认每10秒扫描并开启自动分析，只接受10秒步进的10到60秒', async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), 'workbench-settings-'));
     directories.push(dataDirectory);
     const repository = new WorkspaceRepository(join(dataDirectory, 'workbench.db'));
 
     try {
-      expect(repository.getMonitorSettings()).toEqual({ directory: undefined, enabled: false, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
-      repository.saveMonitorSettings({ directory: 'D:/Inbox', enabled: true, autoAnalyzeEnabled: false, scanIntervalMinutes: 3 });
-      expect(repository.getMonitorSettings()).toEqual({ directory: 'D:/Inbox', enabled: true, autoAnalyzeEnabled: false, scanIntervalMinutes: 3 });
-      expect(() => repository.saveMonitorScanIntervalMinutes(0)).toThrow('自动扫描间隔至少为 1 分钟');
-      expect(() => repository.saveMonitorScanIntervalMinutes(4)).toThrow('自动扫描间隔最多为 3 分钟');
+      expect(repository.getMonitorSettings()).toEqual({ directory: undefined, enabled: false, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
+      repository.saveMonitorSettings({ directory: 'D:/Inbox', enabled: true, autoAnalyzeEnabled: false, scanIntervalSeconds: 60 });
+      expect(repository.getMonitorSettings()).toEqual({ directory: 'D:/Inbox', enabled: true, autoAnalyzeEnabled: false, scanIntervalSeconds: 60 });
+      expect(() => repository.saveMonitorScanIntervalSeconds(0)).toThrow('自动扫描间隔至少为 10 秒');
+      expect(() => repository.saveMonitorScanIntervalSeconds(70)).toThrow('自动扫描间隔最多为 60 秒');
+      expect(() => repository.saveMonitorScanIntervalSeconds(15)).toThrow('自动扫描间隔必须为 10 秒的整数倍');
     } finally {
       repository.close();
     }
   });
 
-  it('旧数据库缺少新增列和设置时自动迁移，并把旧 5 分钟设置限制为 3 分钟', async () => {
+  it('旧数据库的分钟配置不会被当作秒使用，升级后回退为10秒', async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), 'workbench-migration-'));
     directories.push(dataDirectory);
     const databasePath = join(dataDirectory, 'workbench.db');
@@ -102,7 +103,7 @@ describe('工作台 SQLite 数据仓储', () => {
 
     const repository = new WorkspaceRepository(databasePath);
     try {
-      expect(repository.getMonitorSettings()).toMatchObject({ autoAnalyzeEnabled: true, scanIntervalMinutes: 3 });
+      expect(repository.getMonitorSettings()).toMatchObject({ autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
       expect(repository.listPackages()[0]).toMatchObject({ sourceSizeBytes: undefined });
       expect(repository.listTasks()[0]).toMatchObject({ stage: 'identify-package', runtimeTimings: undefined });
     } finally {

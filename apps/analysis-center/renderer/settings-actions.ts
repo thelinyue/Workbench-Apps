@@ -1,8 +1,12 @@
+const MIN_SCAN_INTERVAL_SECONDS = 10;
+const MAX_SCAN_INTERVAL_SECONDS = 60;
+const SCAN_INTERVAL_STEP_SECONDS = 10;
+
 export interface MonitorSettings {
   directory?: string;
   enabled: boolean;
   autoAnalyzeEnabled: boolean;
-  scanIntervalMinutes: number;
+  scanIntervalSeconds: number;
 }
 
 interface SettingsHost {
@@ -46,12 +50,16 @@ export function createSettingsActions({
         reportError('启用监控前请选择目录。');
         return;
       }
-      if (!Number.isInteger(draft.scanIntervalMinutes) || draft.scanIntervalMinutes < 1) {
-        reportError('自动扫描间隔至少为 1 分钟。');
+      if (!Number.isInteger(draft.scanIntervalSeconds) || draft.scanIntervalSeconds < MIN_SCAN_INTERVAL_SECONDS) {
+        reportError('自动扫描间隔至少为 10 秒。');
         return;
       }
-      if (draft.scanIntervalMinutes > 3) {
-        reportError('自动扫描间隔最多为 3 分钟。');
+      if (draft.scanIntervalSeconds > MAX_SCAN_INTERVAL_SECONDS) {
+        reportError('自动扫描间隔最多为 60 秒。');
+        return;
+      }
+      if (draft.scanIntervalSeconds % SCAN_INTERVAL_STEP_SECONDS !== 0) {
+        reportError('自动扫描间隔必须为 10 秒的整数倍。');
         return;
       }
       try {

@@ -19,7 +19,7 @@ describe('监控目录', () => {
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
 
-    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: false, scanIntervalMinutes: 3 });
+    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: false, scanIntervalSeconds: 30 });
     await monitor.scanNow();
     expect(analysis.listPackages()).toEqual([]);
     await monitor.scanNow();
@@ -41,7 +41,7 @@ describe('监控目录', () => {
     const monitor = new MonitorDirectoryService(repository, analysis, { enqueue: async (packageId) => { enqueued.push(packageId); } });
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
       await monitor.start();
       await monitor.scanNow();
       expect(analysis.listPackages()).toEqual([]);
@@ -75,7 +75,7 @@ describe('监控目录', () => {
     const monitor = new MonitorDirectoryService(repository, analysis, { enqueue });
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: false, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: false, scanIntervalSeconds: 10 });
       await monitor.scanNow();
       await monitor.scanNow();
 
@@ -95,7 +95,7 @@ describe('监控目录', () => {
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
 
-    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 3 });
+    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 30 });
     await monitor.scanNow();
     await monitor.scanNow();
     expect(analysis.listPackages()).toEqual([]);
@@ -112,17 +112,17 @@ describe('监控目录', () => {
     const monitor = new MonitorDirectoryService(repository, analysis);
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
-      repository.saveMonitorScanIntervalMinutes(1);
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
+      repository.saveMonitorScanIntervalSeconds(10);
       vi.useFakeTimers();
       const scanNow = vi.spyOn(monitor, 'scanNow');
       await monitor.start();
       await writeFile(join(directory, 'startup.tgz'), 'diagnostic archive');
       expect(scanNow).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(10_000);
       await scanNow.mock.results[0]?.value;
       expect(analysis.listPackages()).toEqual([]);
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(10_000);
       await scanNow.mock.results[1]?.value;
       expect(analysis.listPackages()).toHaveLength(1);
     } finally {
@@ -132,7 +132,7 @@ describe('监控目录', () => {
     }
   });
 
-  it('按保存的分钟间隔执行下一次稳定扫描', async () => {
+  it('按保存的秒级间隔执行下一次稳定扫描', async () => {
     vi.useFakeTimers();
     const directory = await mkdtemp(join(tmpdir(), 'analysis-monitor-interval-'));
     directories.push(directory);
@@ -141,13 +141,13 @@ describe('监控目录', () => {
     const monitor = new MonitorDirectoryService(repository, analysis);
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
-      repository.saveMonitorScanIntervalMinutes(1);
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 20 });
+      repository.saveMonitorScanIntervalSeconds(20);
       const scanNow = vi.spyOn(monitor, 'scanNow');
       await monitor.start();
       await writeFile(join(directory, 'interval.tgz'), 'diagnostic archive');
 
-      await vi.advanceTimersByTimeAsync(59_999);
+      await vi.advanceTimersByTimeAsync(19_999);
       expect(scanNow).not.toHaveBeenCalled();
       expect(analysis.listPackages()).toEqual([]);
       await vi.advanceTimersByTimeAsync(1);
@@ -171,12 +171,12 @@ describe('监控目录', () => {
     const pendingScan = new Promise<void>((resolve) => { finishScan = resolve; });
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
       await monitor.start();
       vi.spyOn(monitor, 'scanNow').mockImplementation(() => pendingScan);
 
-      vi.advanceTimersByTime(60_000);
-      repository.saveMonitorSettings({ directory, enabled: false, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
+      vi.advanceTimersByTime(10_000);
+      repository.saveMonitorSettings({ directory, enabled: false, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
       await monitor.reconfigure();
       finishScan?.();
       await Promise.resolve();
@@ -198,7 +198,7 @@ describe('监控目录', () => {
     const repository = new WorkspaceRepository(join(directory, 'analysis-center.db'));
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
-    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
+    repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
     await monitor.scanNow();
 
     let beginImport: (() => void) | undefined;
@@ -237,7 +237,7 @@ describe('监控目录', () => {
     const repository = new WorkspaceRepository(join(root, 'analysis-center.db'));
     const analysis = new AnalysisCenterService(repository);
     const monitor = new MonitorDirectoryService(repository, analysis);
-    repository.saveMonitorSettings({ directory: oldDirectory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
+    repository.saveMonitorSettings({ directory: oldDirectory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
     await monitor.scanNow();
 
     let beginImport: (() => void) | undefined;
@@ -254,7 +254,7 @@ describe('监控目录', () => {
     try {
       const scanning = monitor.scanNow();
       await importStarted;
-      repository.saveMonitorSettings({ directory: newDirectory, enabled: false, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory: newDirectory, enabled: false, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
       await monitor.reconfigure();
       releaseImport?.();
       await expect(scanning).resolves.toBeUndefined();
@@ -275,7 +275,7 @@ describe('监控目录', () => {
     const monitor = new MonitorDirectoryService(repository, analysis);
 
     try {
-      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
+      repository.saveMonitorSettings({ directory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
       await monitor.start();
       expect(monitor.getStatus()).toEqual(expect.objectContaining({ state: 'paused', warning: expect.stringContaining('无法访问') }));
     } finally {

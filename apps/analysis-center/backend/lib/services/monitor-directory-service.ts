@@ -39,7 +39,7 @@ export class MonitorDirectoryService extends EventEmitter {
     try { await this.establishBaseline(settings.directory, generation); } catch (error) { if (this.isCurrent(generation)) this.pause(settings.directory, error); return; }
     if (!this.isCurrent(generation)) return;
     this.setStatus({ state: 'watching' });
-    this.scheduleNextScan(settings.scanIntervalMinutes, generation);
+    this.scheduleNextScan(settings.scanIntervalSeconds, generation);
   }
 
   public async reconfigure(): Promise<void> {
@@ -131,20 +131,20 @@ export class MonitorDirectoryService extends EventEmitter {
   }
 
   /**
-   * 目录变更只用于保留底层监听和访问错误感知；扫描严格遵循用户保存的固定周期。
+   * 目录变更只用于保留底层监听和访问错误感知；扫描严格遵循用户保存的秒级固定周期。
    * 首次扫描会建立稳定性样本，后续周期扫描完成第二次采样后才导入，避免读取仍在写入的归档包。
    */
-  private scheduleNextScan(intervalMinutes: number, generation: number): void {
+  private scheduleNextScan(intervalSeconds: number, generation: number): void {
     if (this.scanTimer) clearTimeout(this.scanTimer);
     this.scanTimer = setTimeout(async () => {
       this.scanTimer = undefined;
       try {
         await this.scanNow(generation);
-        if (this.isCurrent(generation)) this.scheduleNextScan(intervalMinutes, generation);
+        if (this.isCurrent(generation)) this.scheduleNextScan(intervalSeconds, generation);
       } catch (error) {
         if (this.isCurrent(generation)) this.pause(this.watchedDirectory ?? '监控目录', error);
       }
-    }, intervalMinutes * 60_000);
+    }, intervalSeconds * 1_000);
   }
 
   private async observe(sourcePath: string, generation: number): Promise<void> {

@@ -15,11 +15,12 @@ describe('分析中心 backend Worker', () => {
 
     try {
       await expect(backend.invoke('packages.list', null)).resolves.toEqual([]);
-      await expect(backend.invoke('settings.get', null)).resolves.toEqual({ directory: undefined, enabled: false, autoAnalyzeEnabled: true, scanIntervalMinutes: 1 });
-      await backend.invoke('settings.save', { directory: dataDirectory, enabled: true, autoAnalyzeEnabled: false, scanIntervalMinutes: 3 });
-      await expect(backend.invoke('settings.get', null)).resolves.toEqual({ directory: dataDirectory, enabled: true, autoAnalyzeEnabled: false, scanIntervalMinutes: 3 });
-      await expect(backend.invoke('settings.save', { directory: dataDirectory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 0 })).rejects.toThrow('自动扫描间隔至少为 1 分钟');
-      await expect(backend.invoke('settings.save', { directory: dataDirectory, enabled: true, autoAnalyzeEnabled: true, scanIntervalMinutes: 4 })).rejects.toThrow('自动扫描间隔最多为 3 分钟');
+      await expect(backend.invoke('settings.get', null)).resolves.toEqual({ directory: undefined, enabled: false, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
+      await backend.invoke('settings.save', { directory: dataDirectory, enabled: true, autoAnalyzeEnabled: false, scanIntervalSeconds: 60 });
+      await expect(backend.invoke('settings.get', null)).resolves.toEqual({ directory: dataDirectory, enabled: true, autoAnalyzeEnabled: false, scanIntervalSeconds: 60 });
+      await expect(backend.invoke('settings.save', { directory: dataDirectory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 0 })).rejects.toThrow('自动扫描间隔至少为 10 秒');
+      await expect(backend.invoke('settings.save', { directory: dataDirectory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 70 })).rejects.toThrow('自动扫描间隔最多为 60 秒');
+      await expect(backend.invoke('settings.save', { directory: dataDirectory, enabled: true, autoAnalyzeEnabled: true, scanIntervalSeconds: 15 })).rejects.toThrow('自动扫描间隔必须为 10 秒的整数倍');
     } finally {
       await backend.close();
     }

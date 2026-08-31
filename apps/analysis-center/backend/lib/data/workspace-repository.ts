@@ -5,13 +5,14 @@ import type { DiagnosticPackage, DiagnosticPackageStatus } from '../domain/diagn
 import type { AnalysisResult } from '../analysis-v1/pipeline';
 import type { AnalysisRuntimeTimings } from '../analysis/archive-analysis';
 
-export const MIN_MONITOR_SCAN_INTERVAL_MINUTES = 1;
-export const MAX_MONITOR_SCAN_INTERVAL_MINUTES = 3;
-export const DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES = 1;
+export const MIN_MONITOR_SCAN_INTERVAL_SECONDS = 10;
+export const MAX_MONITOR_SCAN_INTERVAL_SECONDS = 60;
+export const MONITOR_SCAN_INTERVAL_STEP_SECONDS = 10;
+export const DEFAULT_MONITOR_SCAN_INTERVAL_SECONDS = 10;
 export type AnalysisTaskStage = 'identify-package' | 'parse-system-events' | 'analyze-storage' | 'aggregate-anomalies' | 'form-conclusion';
 export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'comprehensive' | 'storage'; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; createdAt: string; startedAt?: string; progress: number; stage: AnalysisTaskStage; message: string; errorMessage?: string; runtimeTimings?: AnalysisRuntimeTimings; }
 export interface AnalysisRecord { id: string; packageId: string; taskId: string; status: AnalysisTaskRecord['status']; createdAt: string; updatedAt: string; }
-export interface MonitorSettings { directory?: string; enabled: boolean; autoAnalyzeEnabled: boolean; scanIntervalMinutes: number; }
+export interface MonitorSettings { directory?: string; enabled: boolean; autoAnalyzeEnabled: boolean; scanIntervalSeconds: number; }
 export interface AnalysisFailureRecord { taskId: string; packageId: string; stage: string; errorMessage: string; inputMetadata: Record<string, string>; createdAt: string; }
 
 const COMPLETED_TASK_STATUSES = ['succeeded', 'failed', 'cancelled'] as const;
@@ -45,18 +46,21 @@ export class WorkspaceRepository {
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorDirectories', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(directories));
   }
 
-  public getMonitorScanIntervalMinutes(): number {
-    const value = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorScanIntervalMinutes'").get() as { value: string } | undefined;
-    const minutes = value ? Number(value.value) : DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES;
-    return Number.isInteger(minutes) && minutes >= MIN_MONITOR_SCAN_INTERVAL_MINUTES
-      ? Math.min(minutes, MAX_MONITOR_SCAN_INTERVAL_MINUTES)
-      : DEFAULT_MONITOR_SCAN_INTERVAL_MINUTES;
+  /** 秒级配置使用独立键；旧版分钟键不参与读取，避免升级后把分钟数误当成秒数。 */
+  public getMonitorScanIntervalSeconds(): number {
+    const value = this.database.prepare("SELECT value FROM settings WHERE key = 'monitorScanIntervalSeconds'").get() as { value: string } | undefined;
+    const seconds = value ? Number(value.value) : DEFAULT_MONITOR_SCAN_INTERVAL_SECONDS;
+    return Number.isInteger(seconds) && seconds >= MIN_MONITOR_SCAN_INTERVAL_SECONDS
+      && seconds <= MAX_MONITOR_SCAN_INTERVAL_SECONDS && seconds % MONITOR_SCAN_INTERVAL_STEP_SECONDS === 0
+      ? seconds
+      : DEFAULT_MONITOR_SCAN_INTERVAL_SECONDS;
   }
 
-  public saveMonitorScanIntervalMinutes(minutes: number): void {
-    if (!Number.isInteger(minutes) || minutes < MIN_MONITOR_SCAN_INTERVAL_MINUTES) throw new Error('自动扫描间隔至少为 1 分钟');
-    if (minutes > MAX_MONITOR_SCAN_INTERVAL_MINUTES) throw new Error('自动扫描间隔最多为 3 分钟');
-    this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorScanIntervalMinutes', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(minutes));
+  public saveMonitorScanIntervalSeconds(seconds: number): void {
+    if (!Number.isInteger(seconds) || seconds < MIN_MONITOR_SCAN_INTERVAL_SECONDS) throw new Error('自动扫描间隔至少为 10 秒');
+    if (seconds > MAX_MONITOR_SCAN_INTERVAL_SECONDS) throw new Error('自动扫描间隔最多为 60 秒');
+    if (seconds % MONITOR_SCAN_INTERVAL_STEP_SECONDS !== 0) throw new Error('自动扫描间隔必须为 10 秒的整数倍');
+    this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorScanIntervalSeconds', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(seconds));
   }
 
   public upsertPackage(item: DiagnosticPackage): void {
@@ -98,13 +102,13 @@ export class WorkspaceRepository {
       directory: directory || undefined,
       enabled: enabledRow ? enabledRow.value === 'true' : Boolean(directory),
       autoAnalyzeEnabled: autoAnalyzeRow ? autoAnalyzeRow.value === 'true' : true,
-      scanIntervalMinutes: this.getMonitorScanIntervalMinutes()
+      scanIntervalSeconds: this.getMonitorScanIntervalSeconds()
     };
   }
 
   public saveMonitorSettings(settings: MonitorSettings): void {
     const directory = settings.directory?.trim();
-    this.saveMonitorScanIntervalMinutes(settings.scanIntervalMinutes);
+    this.saveMonitorScanIntervalSeconds(settings.scanIntervalSeconds);
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorDirectory', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(directory ?? '');
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorEnabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(Boolean(directory && settings.enabled)));
     this.database.prepare(`INSERT INTO settings (key, value) VALUES ('monitorAutoAnalyzeEnabled', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(settings.autoAnalyzeEnabled));
