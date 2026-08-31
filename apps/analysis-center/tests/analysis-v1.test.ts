@@ -1,8 +1,43 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { analyzeV1Sources } from '../backend/lib/analysis-v1/pipeline';
+import { PipelineProfiler } from '../backend/lib/analysis-v1/pipeline-profiler';
 
 describe('V1 统一诊断分析', () => {
+  it('显式性能采集在同次来源遍历中累计解析、规则与产物指标', () => {
+    const profiler = new PipelineProfiler();
+
+    const result = analyzeV1Sources({
+      sourceName: 'profiled.tgz',
+      profiler,
+      files: {
+        'kern.log': '2026-08-26T03:12:01+08:00 kernel: Buffer I/O error on dev sdc',
+        'mdstat.log': 'md0 : active raid1 sdc2[1](F) sdb2[0]'
+      }
+    });
+
+    const profile = profiler.snapshot();
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'storage.io_error' }),
+      expect.objectContaining({ type: 'raid.member_failed' })
+    ]));
+    expect(profile.counters).toMatchObject({
+      linesProcessed: 2,
+      candidateLines: 2,
+      ruleInvocations: expect.any(Number),
+      ruleMatches: 2,
+      eventsCreated: 2,
+      findingsCreated: 2,
+      evidenceRetained: 2,
+      diagnosesCreated: 1,
+      recommendationsCreated: 1
+    });
+    expect(profile.stages['parser.total'].invocations).toBeGreaterThan(0);
+    expect(profile.stages['rules.event.total'].invocations).toBeGreaterThan(0);
+    expect(profile.counters.ruleInvocations).toBeGreaterThan(0);
+    expect(profile.rules.find((rule) => rule.ruleId === 'storage.io.buffer')?.matches).toBe(1);
+  });
+
   it('将磁盘、SMART、RAID 与文件系统证据聚合为一个主要诊断', () => {
     const result = analyzeV1Sources({
       sourceName: 'storage-failure.tgz',

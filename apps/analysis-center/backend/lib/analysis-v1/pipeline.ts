@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import rulePackJson from './event-rule-pack.json';
+import type { PipelineProfiler } from './pipeline-profiler';
 import { classifyV1Source, type V1SourceType } from './source-classifier';
 
 export type Severity = 'critical' | 'warning' | 'info';
@@ -17,6 +18,7 @@ export interface AnalysisResult { schemaVersion: 1; id: string; status: 'complet
 
 interface DeviceIdentity { resource: string; label?: string; model?: string; serial?: string; slot?: string; usedFor?: string; }
 interface RaidAssessment { resource: string; level?: string; expectedMembers?: number; activeMembers?: number; missingMemberIndexes?: number[]; degraded: boolean; }
+interface RecommendationRequest { kind: 'smart' | 'raid'; resource: string; }
 
 const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume'])), regex: z.string(), type: z.string() })) });
 const rulePack = rulePackSchema.parse(rulePackJson);
@@ -28,8 +30,9 @@ const kernelEventCandidate = /\b(?:error|timeout|timed out|reset controller|devi
 export interface V1Progress { processedFiles: number; totalFiles: number; progress: number; }
 
 /** V1 只分析白名单来源，所有后续规则只消费这里生成的结构化事件。 */
-export function analyzeV1Sources(input: { sourceName: string; files: Record<string, string>; onProgress?: (progress: V1Progress) => void }): AnalysisResult {
+export function analyzeV1Sources(input: { sourceName: string; files: Record<string, string>; profiler?: PipelineProfiler; onProgress?: (progress: V1Progress) => void }): AnalysisResult {
   const started = new Date();
+  const profiler = input.profiler;
   const evidence: Evidence[] = [];
   const events: NormalizedEvent[] = [];
   const topology = new Map<string, string[]>();
@@ -38,6 +41,9 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   const deviceIdentities = new Map<string, DeviceIdentity>();
   let processedLines = 0;
   let evidenceNumber = 0;
+  let candidateLines = 0;
+  let ruleInvocations = 0;
+  let ruleMatches = 0;
   const sources = Object.entries(input.files).filter(([sourceFile]) => classifyV1Source(sourceFile));
   let lastProgress = -1;
   const reportProgress = (processedFiles: number, processedCharacters = 0, currentLength = 0, force = false) => {
@@ -55,9 +61,18 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
     const [sourceFile, content] = sources[sourceIndex];
     const source = classifyV1Source(sourceFile);
     if (!source) continue;
+    if (profiler && !profiler.hasFile(sourceFile)) {
+      const decodedBytes = Buffer.byteLength(content);
+      profiler.recordFile(sourceFile, source, { bytesRead: decodedBytes, decodedBytes });
+    }
+    const fileStartedAt = profiler?.mark();
+    const initialEventCount = events.length;
+    const initialEvidenceCount = evidence.length;
+    let fileLineCount = 0;
+    let fileRuleDurationMs = 0;
     if (source === 'sysinfo') {
+      profiler?.increment('structuredFilesParsed');
       parseSysinfo(content, sourceFile, add, deviceIdentities);
-      reportProgress(sourceIndex + 1, 0, 0, true);
     }
     else {
       const mdstatContext: { currentArray?: string } = {};
@@ -65,16 +80,26 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
       let lineNumber = 0;
       forEachLine(content, (line, endOffset) => {
         lineNumber += 1;
+        fileLineCount += 1;
         processedLines += 1;
         if (source === 'kernel') updateKernelContext(line, lineNumber, kernelContext);
         if (source === 'kernel' && !kernelEventCandidate.test(line)) {
           if (lineNumber % 1024 === 0) reportProgress(sourceIndex, endOffset, content.length);
           return;
         }
+        if (profiler) candidateLines += 1;
+        const rulesStartedAt = profiler?.mark();
         const emittedTypes = new Set<string>();
         for (const rule of rulesBySource[source]) {
           if (source === 'mdstat' && rule.type === 'raid.degraded') continue;
+          const ruleStartedAt = profiler?.mark();
           const match = rule.pattern.exec(line);
+          if (profiler && ruleStartedAt !== undefined) {
+            const durationMs = profiler.elapsed(ruleStartedAt);
+            ruleInvocations += 1;
+            if (match) ruleMatches += 1;
+            profiler.recordRule(rule.id, 1, Boolean(match), durationMs);
+          }
           if (!match || emittedTypes.has(rule.type)) continue;
           const device = match.groups?.device;
           const slot = match.groups?.slot;
@@ -96,12 +121,26 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
           add(rule.id, rule.type, sourceFile, line, lineNumber, resource, attributes);
           emittedTypes.add(rule.type);
         }
+        if (profiler && rulesStartedAt !== undefined) fileRuleDurationMs += profiler.elapsed(rulesStartedAt);
         if (source === 'mdstat') parseMdstatLine(line, sourceFile, lineNumber, add, deviceArrays, raidAssessments, mdstatContext);
         if (source === 'ugvolume') parseTopology(line, topology);
         if (lineNumber % 1024 === 0) reportProgress(sourceIndex, endOffset, content.length);
       });
-      reportProgress(sourceIndex + 1, 0, 0, true);
     }
+    if (profiler && fileStartedAt !== undefined) {
+      const fileDurationMs = profiler.elapsed(fileStartedAt);
+      const parserDurationMs = Math.max(0, fileDurationMs - fileRuleDurationMs);
+      profiler.recordElapsed('parser.total', parserDurationMs);
+      if (source !== 'sysinfo') profiler.recordElapsed('rules.event.total', fileRuleDurationMs);
+      profiler.addFileMetrics(sourceFile, {
+        linesProcessed: fileLineCount,
+        parserDurationMs,
+        ruleDurationMs: fileRuleDurationMs,
+        eventsCreated: events.length - initialEventCount,
+        evidenceRetained: evidence.length - initialEvidenceCount
+      });
+    }
+    reportProgress(sourceIndex + 1, 0, 0, true);
   }
   canonicalizeDeviceEvents(events, evidence, deviceIdentities);
   for (const event of events.filter((item) => item.type === 'raid.member_failed')) {
@@ -113,9 +152,33 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
     const linked = topology.get(event.resource ?? '') ?? [];
     for (const resource of linked) event.attributes.affected = resource;
   }
-  const findings = aggregateFindings(events, evidence, topology);
+  const findings = profiler
+    ? profiler.measure('finding.aggregate', () => aggregateFindings(events, evidence, topology))
+    : aggregateFindings(events, evidence, topology);
   const deviceAssessments = buildDeviceAssessments(deviceIdentities, events);
-  const { diagnoses, recommendations } = composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments);
+  const diagnosisComposition = profiler
+    ? profiler.measure('diagnosis.compose', () => composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments))
+    : composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments);
+  const diagnoses = diagnosisComposition.diagnoses;
+  const recommendations = profiler
+    ? profiler.measure('recommendation.compose', () => composeRecommendations(diagnosisComposition.recommendationRequests))
+    : composeRecommendations(diagnosisComposition.recommendationRequests);
+  if (profiler) {
+    const findingEvidenceIds = findings.flatMap((finding) => finding.evidenceIds);
+    profiler.increment('linesProcessed', processedLines);
+    profiler.increment('candidateLines', candidateLines);
+    profiler.increment('ruleInvocations', ruleInvocations);
+    profiler.increment('ruleMatches', ruleMatches);
+    profiler.increment('eventsCreated', events.length);
+    profiler.increment('findingsCreated', findings.length);
+    profiler.increment('evidenceRetained', evidence.length);
+    profiler.increment('diagnosesCreated', diagnoses.length);
+    profiler.increment('recommendationsCreated', recommendations.length);
+    profiler.increment('duplicateEvents', duplicateEventCount(events, evidence));
+    profiler.increment('duplicateEvidence', duplicateEvidenceCount(evidence));
+    profiler.increment('findingEvidenceReferences', findingEvidenceIds.length);
+    profiler.increment('uniqueFindingEvidenceReferences', new Set(findingEvidenceIds).size);
+  }
   const missingData = ['sysinfo', 'mdstat'].filter((source) => !sources.some(([file]) => classifyV1Source(file) === source));
   const ended = new Date();
   const criticalCount = diagnoses.filter((item) => item.severity === 'critical').length;
@@ -317,9 +380,9 @@ function buildEngineerConclusion(devices: DeviceAssessment[], arrays: string[] =
  * 诊断层只提升已经由 Finding 证实的事实：SMART 快照本身可定位设备；多设备同时异常提高整体风险，
  * 但不会据此推断 RAID 或文件系统的因果关系。
  */
-function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topology: Map<string, string[]>, deviceArrays: Map<string, string[]>, deviceAssessments: DeviceAssessment[], raidAssessments: Map<string, RaidAssessment>): { diagnoses: Diagnosis[]; recommendations: Recommendation[] } {
+function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topology: Map<string, string[]>, deviceArrays: Map<string, string[]>, deviceAssessments: DeviceAssessment[], raidAssessments: Map<string, RaidAssessment>): { diagnoses: Diagnosis[]; recommendationRequests: RecommendationRequest[] } {
   const diagnoses: Diagnosis[] = [];
-  const recommendations: Recommendation[] = [];
+  const recommendationRequests: RecommendationRequest[] = [];
   const deviceByResource = new Map(deviceAssessments.map((device) => [device.resource, device]));
   const resources = new Set(findings.flatMap((finding) => finding.affectedResources.filter((resource) => resource.startsWith('/dev/'))));
   const smartDevices = [...resources].filter((device) => findings.some((finding) => finding.type === 'storage.smart_risk' && finding.affectedResources.includes(device)));
@@ -333,7 +396,7 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
   };
   const ensureSmartRecommendation = (device: string): string => {
     const id = `recommendation.smart:${device}`;
-    if (!recommendations.some((item) => item.id === id)) recommendations.push({ id, priority: 1, type: 'inspection', title: `检查 ${device} SMART`, reason: '确认磁盘介质错误及健康状态。', risk: 'safe' });
+    if (!recommendationRequests.some((item) => item.kind === 'smart' && item.resource === device)) recommendationRequests.push({ kind: 'smart', resource: device });
     return id;
   };
 
@@ -365,7 +428,7 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
     const recommendationIds = hasSmart ? [ensureSmartRecommendation(device)] : [];
     for (const array of arrays) {
       const id = `recommendation.raid:${array}`;
-      if (!recommendations.some((item) => item.id === id)) recommendations.push({ id, priority: 2, type: 'verification', title: `确认 ${array} 当前冗余状态`, reason: '确认阵列是否仍具有足够冗余。', risk: 'safe' });
+      if (!recommendationRequests.some((item) => item.kind === 'raid' && item.resource === array)) recommendationRequests.push({ kind: 'raid', resource: array });
       recommendationIds.push(id);
     }
 
@@ -461,4 +524,32 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
     }
   }
   if (!diagnoses.length) { const raid = findings.find((finding) => finding.type === 'raid.degraded'); if (raid) diagnoses.push({ id: 'raid.array.degraded', category: 'raid', severity: 'critical', confidence: 'confirmed', title: `${raid.affectedResources[0] ?? 'RAID'} 已降级`, summary: '阵列状态异常，需要确认冗余与成员状态。', primaryResource: raid.affectedResources[0], affectedResources: raid.affectedResources, findingIds: [raid.id], recommendationIds: [] }); }
-  return { diagnoses, recommendations: recommendations.sort((left, right) => left.priority - right.priority) }; }
+  return { diagnoses, recommendationRequests }; }
+
+/** Recommendation 的文案物化与排序独立计时，诊断阶段只保留去重后的请求和稳定 ID。 */
+function composeRecommendations(requests: RecommendationRequest[]): Recommendation[] {
+  return requests.map((request): Recommendation => request.kind === 'smart'
+    ? { id: `recommendation.smart:${request.resource}`, priority: 1, type: 'inspection', title: `检查 ${request.resource} SMART`, reason: '确认磁盘介质错误及健康状态。', risk: 'safe' }
+    : { id: `recommendation.raid:${request.resource}`, priority: 2, type: 'verification', title: `确认 ${request.resource} 当前冗余状态`, reason: '确认阵列是否仍具有足够冗余。', risk: 'safe' })
+    .sort((left, right) => left.priority - right.priority);
+}
+
+function duplicateEvidenceCount(evidence: Evidence[]): number {
+  const unique = new Set(evidence.map((item) => JSON.stringify([
+    item.sourceFile, item.lineNumber, item.timestamp, item.timestampPrecision, item.timestampConfidence,
+    item.eventType, item.resource, item.rawMessage, item.contextBefore, item.contextAfter
+  ])));
+  return evidence.length - unique.size;
+}
+
+function duplicateEventCount(events: NormalizedEvent[], evidence: Evidence[]): number {
+  const evidenceById = new Map(evidence.map((item) => [item.id, item]));
+  const unique = new Set(events.map((event) => {
+    const item = evidenceById.get(event.evidenceId);
+    return JSON.stringify([
+      event.ruleId, event.type, event.resource, event.timestamp, event.timestampPrecision,
+      event.timestampConfidence, event.attributes, item?.sourceFile, item?.lineNumber, item?.rawMessage
+    ]);
+  }));
+  return events.length - unique.size;
+}

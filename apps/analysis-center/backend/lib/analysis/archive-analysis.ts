@@ -15,6 +15,7 @@ import bootstrapCss from './static/bootstrap.min.css?raw';
 import bootstrapScript from './static/bootstrap.bundle.min.js?raw';
 import { analyzeStructuredExtract, type StructuredAnalysis } from './structured-analysis';
 import { analyzeV1Sources, type AnalysisResult as V1AnalysisResult } from '../analysis-v1/pipeline';
+import { type PipelineProfile, PipelineProfiler } from '../analysis-v1/pipeline-profiler';
 import { classifyV1Source } from '../analysis-v1/source-classifier';
 import { selectImportantFindings } from '../../../shared/finding-presentation';
 import type { AnalysisTaskStage } from '../data/workspace-repository';
@@ -38,60 +39,101 @@ export interface ArchiveAnalysisResult {
 export interface V1ArchiveAnalysisResult {
   result: V1AnalysisResult;
   browserPath: string;
+  performanceProfile?: PipelineProfile;
 }
 
 /**
  * V1 归档入口只负责输入准备与单次来源读取；诊断语义完全由 analysis-v1 Pipeline 生成。
  * Legacy 的关键词扫描和旧报告函数保留在下方，不能从这个入口回退调用。
  */
-export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest, 'sourcePath' | 'extractDirectory' | 'onProgress'>): Promise<V1ArchiveAnalysisResult> {
-  const archiveFormat = getDiagnosticPackageFormat(request.sourcePath);
-  if (!archiveFormat) throw new Error('仅支持 .tgz、.tgz.temp 或 .zip 格式的诊断包');
-  request.onProgress?.({ progress: 5, stage: 'identify-package', message: '正在验证诊断包' });
-  if (archiveFormat === 'tgz') await assertDiagnosticArchiveIntegrity(request.sourcePath);
-  await prepareExtractDirectory(request.extractDirectory);
-  try {
-    request.onProgress?.({ progress: 15, stage: 'identify-package', message: '正在解压诊断包' });
-    if (archiveFormat === 'tgz') await tar.x({ file: request.sourcePath, cwd: request.extractDirectory, gzip: true, strict: true });
-    else await extractZip(request.sourcePath, { dir: request.extractDirectory });
-  } catch (error) {
-    throw new Error(`无法解压诊断包：${error instanceof Error ? error.message : String(error)}`);
-  }
+export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest, 'sourcePath' | 'extractDirectory' | 'onProgress'> & { profiler?: PipelineProfiler }): Promise<V1ArchiveAnalysisResult> {
+  const profiler = request.profiler;
+  const recognizeInput = async () => {
+    const format = getDiagnosticPackageFormat(request.sourcePath);
+    if (!format) throw new Error('仅支持 .tgz、.tgz.temp 或 .zip 格式的诊断包');
+    request.onProgress?.({ progress: 5, stage: 'identify-package', message: '正在验证诊断包' });
+    if (format === 'tgz') await assertDiagnosticArchiveIntegrity(request.sourcePath);
+    return format;
+  };
+  const archiveFormat = profiler
+    ? await profiler.measureAsync('input.recognition', recognizeInput)
+    : await recognizeInput();
+  const extractArchive = async () => {
+    await prepareExtractDirectory(request.extractDirectory);
+    try {
+      request.onProgress?.({ progress: 15, stage: 'identify-package', message: '正在解压诊断包' });
+      if (archiveFormat === 'tgz') await tar.x({ file: request.sourcePath, cwd: request.extractDirectory, gzip: true, strict: true });
+      else await extractZip(request.sourcePath, { dir: request.extractDirectory });
+    } catch (error) {
+      throw new Error(`无法解压诊断包：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  if (profiler) await profiler.measureAsync('archive.extract', extractArchive);
+  else await extractArchive();
   request.onProgress?.({ progress: 35, stage: 'parse-system-events', message: '正在识别系统与存储日志' });
-  const files = await collectV1Sources(request.extractDirectory, (processedFiles, totalFiles) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), stage: 'parse-system-events', message: `正在读取日志（${processedFiles}/${totalFiles}）` }));
+  const files = await collectV1Sources(request.extractDirectory, profiler, (processedFiles, totalFiles) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), stage: 'parse-system-events', message: `正在读取日志（${processedFiles}/${totalFiles}）` }));
   if (!Object.keys(files).length) throw new Error('无法识别日志包：未找到受支持的系统或存储日志');
   request.onProgress?.({ progress: 55, stage: 'analyze-storage', message: '正在分析存储状态' });
-  const result = analyzeV1Sources({ sourceName: basename(request.sourcePath), files, onProgress: ({ processedFiles, totalFiles, progress }) => request.onProgress?.({ progress: 55 + Math.round(progress * 0.3), stage: 'analyze-storage', message: `正在解析日志（${processedFiles}/${totalFiles}）` }) });
+  const result = analyzeV1Sources({ sourceName: basename(request.sourcePath), files, profiler, onProgress: ({ processedFiles, totalFiles, progress }) => request.onProgress?.({ progress: 55 + Math.round(progress * 0.3), stage: 'analyze-storage', message: `正在解析日志（${processedFiles}/${totalFiles}）` }) });
   request.onProgress?.({ progress: 85, stage: 'aggregate-anomalies', message: '正在聚合异常并关联诊断结论' });
   const browserPath = join(request.extractDirectory, 'analysis-result.html');
-  await writeFile(browserPath, renderV1Html(result), 'utf8');
+  const renderReport = () => writeFile(browserPath, renderV1Html(result), 'utf8');
+  if (profiler) await profiler.measureAsync('report.render', renderReport);
+  else await renderReport();
   request.onProgress?.({ progress: 98, stage: 'form-conclusion', message: '正在形成诊断结论' });
-  return { result, browserPath };
+  return profiler ? { result, browserPath, performanceProfile: profiler.snapshot() } : { result, browserPath };
 }
 
 /** 先收集并排序白名单文件，再逐一读取；这样进度稳定且结果不受文件系统枚举顺序影响。 */
-async function collectV1Sources(root: string, onProgress?: (processedFiles: number, totalFiles: number) => void): Promise<Record<string, string>> {
+async function collectV1Sources(root: string, profiler?: PipelineProfiler, onProgress?: (processedFiles: number, totalFiles: number) => void): Promise<Record<string, string>> {
   const files: Record<string, string> = {};
-  const candidates: string[] = [];
+  const candidates: Array<{ path: string; source: NonNullable<ReturnType<typeof classifyV1Source>> }> = [];
   const visit = async (directory: string): Promise<void> => {
+    profiler?.increment('directoriesVisited');
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) { await visit(path); continue; }
-      if (!entry.isFile() || !classifyV1Source(entry.name)) continue;
-      candidates.push(path);
+      if (!entry.isFile()) continue;
+      profiler?.increment('filesDiscovered');
+      const source = classifyV1Source(entry.name);
+      if (!source) { profiler?.increment('filesIgnored'); continue; }
+      candidates.push({ path, source });
     }
   };
-  await visit(root);
-  candidates.sort();
-  for (let index = 0; index < candidates.length; index += 1) {
-    const path = candidates[index];
+  const inventory = async () => {
+    profiler?.increment('fileInventoryPasses');
+    await visit(root);
+    candidates.sort((left, right) => left.path.localeCompare(right.path));
+  };
+  if (profiler) await profiler.measureAsync('input.recognition', inventory);
+  else await inventory();
+
+  const readCandidates = async () => {
+    for (let index = 0; index < candidates.length; index += 1) {
+      const { path, source } = candidates[index];
+      const startedAt = profiler?.mark();
       try {
         const content = await readFile(path);
-        files[path.slice(root.length + 1).replaceAll('\\', '/')] = path.toLowerCase().endsWith('.gz') ? gunzipSync(content).toString('utf8') : content.toString('utf8');
+        const decoded = path.toLowerCase().endsWith('.gz') ? gunzipSync(content) : content;
+        const fileKey = path.slice(root.length + 1).replaceAll('\\', '/');
+        files[fileKey] = decoded.toString('utf8');
+        if (profiler) {
+          const decodedBytes = decoded.byteLength;
+          profiler.increment('filesRead');
+          profiler.increment('bytesRead', content.byteLength);
+          profiler.increment('decodedBytes', decodedBytes);
+          profiler.recordFile(fileKey, source, { bytesRead: content.byteLength, decodedBytes, readDurationMs: startedAt === undefined ? 0 : profiler.elapsed(startedAt) });
+        }
       }
-      catch (error) { console.error(`读取 V1 分析日志失败，已跳过：${path}；原因：${error instanceof Error ? error.message : String(error)}`); }
-    onProgress?.(index + 1, candidates.length);
-  }
+      catch (error) {
+        profiler?.increment('filesIgnored');
+        console.error(`读取 V1 分析日志失败，已跳过：${path}；原因：${error instanceof Error ? error.message : String(error)}`);
+      }
+      onProgress?.(index + 1, candidates.length);
+    }
+  };
+  if (profiler) await profiler.measureAsync('source.read', readCandidates);
+  else await readCandidates();
   return files;
 }
 

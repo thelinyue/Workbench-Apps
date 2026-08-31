@@ -7,6 +7,7 @@ import * as tar from 'tar';
 import yazl from 'yazl';
 import { afterEach, expect, it } from 'vitest';
 import { runV1ArchiveAnalysis } from '../backend/lib/analysis/archive-analysis';
+import { PipelineProfiler } from '../backend/lib/analysis-v1/pipeline-profiler';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
@@ -88,7 +89,7 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
     { name: 'ai_engine_crash.xlog.gz', content: gzipSync('2026-08-30T19:32:00+08:00 kernel: Buffer I/O error on dev sdz') }
   ]);
 
-  const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+  const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted'), profiler: new PipelineProfiler() });
 
   expect(output.result.metadata.processedFiles).toBe(2);
   expect(output.result.metadata.analyzerVersion).toBe('1.1.0');
@@ -99,6 +100,30 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
   expect(output.result.findings).not.toEqual(expect.arrayContaining([
     expect.objectContaining({ affectedResources: expect.arrayContaining(['/dev/sdz']) })
   ]));
+  expect(output.performanceProfile?.counters).toMatchObject({
+    fileInventoryPasses: 1,
+    filesDiscovered: 3,
+    filesIgnored: 1,
+    filesRead: 2,
+    linesProcessed: 2,
+    eventsCreated: 2,
+    findingsCreated: 2,
+    evidenceRetained: 2
+  });
+  expect(output.performanceProfile?.files.map((file) => file.alias)).toEqual(['kernel-01', 'kernel-02']);
+  expect(JSON.stringify(output.performanceProfile)).not.toContain('DEVICE');
+  expect(output.performanceProfile?.stages['archive.extract'].invocations).toBe(1);
+  expect(output.performanceProfile?.stages['source.read'].invocations).toBe(1);
+  expect(output.performanceProfile?.stages['parser.total'].invocations).toBeGreaterThan(0);
+  expect(output.performanceProfile?.stages['rules.event.total'].invocations).toBeGreaterThan(0);
+  expect(output.performanceProfile?.stages['finding.aggregate'].invocations).toBe(1);
+  expect(output.performanceProfile?.stages['diagnosis.compose'].invocations).toBe(1);
+  expect(output.performanceProfile?.stages['recommendation.compose'].invocations).toBe(1);
+  expect(output.performanceProfile?.stages['report.render'].invocations).toBe(1);
+
+  const ordinaryOutput = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'ordinary-extracted') });
+  expect(ordinaryOutput.performanceProfile).toBeUndefined();
+  expect(normalizeRuntimeFields(ordinaryOutput.result)).toEqual(normalizeRuntimeFields(output.result));
 });
 
 it('V1 分析在解压目标不是目录时返回中文错误', async () => {
@@ -120,4 +145,17 @@ async function createZip(archivePath: string, files: Array<{ name: string; conte
     for (const file of files) zip.addBuffer(Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content), file.name);
     zip.end();
   });
+}
+
+function normalizeRuntimeFields(result: Awaited<ReturnType<typeof runV1ArchiveAnalysis>>['result']) {
+  return {
+    ...result,
+    id: '<runtime>',
+    metadata: {
+      ...result.metadata,
+      startTime: '<runtime>',
+      completeTime: '<runtime>',
+      duration: 0
+    }
+  };
 }
