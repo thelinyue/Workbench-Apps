@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildResultPresentation } from '../shared/result-presentation';
 import { createEvidenceDrawerController, getEvidencePresentation, type EvidenceDrawerController, type EvidenceDrawerState } from './evidence-drawer';
 import { AppHostClient } from './host-api';
+import { createLatestLoad } from './load-coordinator';
 import { createPackageImportWorkflow } from './package-file-import';
 import { createSettingsActions, type MonitorSettings } from './settings-actions';
 import { formatElapsed, getAnalysisRuntimePresentation, getLatestRuntimeTimingsByPackageId, getQueuePosition, isOutsideOverflowMenu, type AnalysisRuntimeTimingsView } from './task-presentation';
@@ -62,12 +63,14 @@ export function AnalysisCenterApp() {
   const showError = (error: unknown) => setMessage(error instanceof Error ? error.message : String(error));
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
-  const load = useCallback(async () => {
-    const [nextPackages, nextTasks, nextMonitor, nextMonitorStatus, nextRecentResults] = await Promise.all([
+  const load = useMemo(() => createLatestLoad(
+    () => Promise.all([
       host.invoke<PackageItem[]>('packages.list'), host.invoke<TaskItem[]>('tasks.list'), host.invoke<MonitorSettings>('settings.get'), host.invoke<{ state: string; warning?: string }>('monitor.status'), host.invoke<Array<{ packageId: string; result: Result }>>('results.recent')
-    ]);
-    setPackages(nextPackages); setTasks(nextTasks); setMonitor(nextMonitor); setMonitorStatus(nextMonitorStatus); setRecentResults(nextRecentResults);
-  }, []);
+    ]),
+    ([nextPackages, nextTasks, nextMonitor, nextMonitorStatus, nextRecentResults]) => {
+      setPackages(nextPackages); setTasks(nextTasks); setMonitor(nextMonitor); setMonitorStatus(nextMonitorStatus); setRecentResults(nextRecentResults);
+    }
+  ), []);
 
   const openResult = useCallback(async (packageId: string) => {
     const value = await host.invoke<Result | null>('results.get', { packageId });
