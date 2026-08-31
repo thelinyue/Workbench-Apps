@@ -68,8 +68,8 @@ export class AnalysisTaskService extends EventEmitter {
   ) { super(); }
 
   /**
-   * 将规则快照绑定到任务，而不是在 Worker 中再次读取外部文件。
-   * 这样规则编辑器保存后的结果可以按一次分析任务稳定复现，任务执行期间规则变化也不会影响当前任务。
+   * 任务只传递诊断包路径与解压目录，Worker 根据源文件后缀选择对应的内置格式规则。
+   * 旧规则参数保留在方法签名中以兼容已有调用方，但不会参与活动分析。
    */
   public async enqueue(packageId: string, scope: 'comprehensive' | 'storage' = 'comprehensive', _legacyRules?: AnalyzerRuleCatalog): Promise<void> {
     if (this.closing) throw new Error('分析任务服务正在关闭，不能添加新任务');

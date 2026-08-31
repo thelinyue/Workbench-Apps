@@ -3,6 +3,8 @@ export interface FindingPresentationInput {
   severity: 'critical' | 'warning' | 'info';
   occurrenceCount: number;
   affectedResources?: string[];
+  title?: string;
+  summary?: string;
 }
 
 export interface ImportantFindingInput extends FindingPresentationInput { id: string; }
@@ -45,8 +47,8 @@ const riskLabels = { critical: '严重', warning: '警告', info: '提示' } as 
  */
 export function presentFinding(input: FindingPresentationInput) {
   const copy = findingCopies[input.type] ?? {
-    title: '未分类异常',
-    meaning: '日志中记录到尚未归类的异常事件，当前无法仅凭该事件确定具体原因。',
+    title: input.title ?? '未分类异常',
+    meaning: input.summary ?? '日志中记录到尚未归类的异常事件，当前无法仅凭该事件确定具体原因。',
     advice: '请保留诊断日志并联系工程师进一步检查。'
   };
   return { ...copy, occurrenceText: `已记录 ${input.occurrenceCount} 次。`, riskLabel: riskLabels[input.severity], technicalEvent: input.type, affectedResources: input.affectedResources ?? [] };

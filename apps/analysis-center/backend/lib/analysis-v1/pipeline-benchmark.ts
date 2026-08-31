@@ -314,9 +314,9 @@ function ratio(numerator: number, denominator: number, digits = 2): number {
 
 function roundMilliseconds(value: number): number { return Number(value.toFixed(3)); }
 function pad(value: number): string { return String(value).padStart(2, '0'); }
-function safeFileAlias(value: string): string | undefined { return /^(kernel|sysinfo|mdstat|ugvolume)-\d{2,}$/.test(value) ? value : undefined; }
-function safeRuleId(value: string): string | undefined { return /^(storage|raid|system|filesystem)\.[a-z0-9._-]+$/.test(value) ? value : undefined; }
-function safeDiagnosisId(value: string): string | undefined { return /^(storage|raid|system|filesystem)\.[a-z0-9._-]+$/.test(value) ? value : undefined; }
+function safeFileAlias(value: string): string | undefined { return /^(kernel|sysinfo|mdstat|ugvolume|format-rule)-\d{2,}$/.test(value) ? value : undefined; }
+function safeRuleId(value: string): string | undefined { return /^(storage|raid|system|filesystem|format-rule)\.[a-z0-9._-]+$/.test(value) ? value : undefined; }
+function safeDiagnosisId(value: string): string | undefined { return /^(storage|raid|system|filesystem|format-rule)\.[a-z0-9._-]+$/.test(value) ? value : undefined; }
 function safeRecommendationId(value: string): string | undefined { const id = value.split(':', 1)[0]; return /^recommendation\.(smart|raid)$/.test(id) ? id : undefined; }
 
 function stageGuidance(stage: PipelineStageName): { focus: string; optimizationDirection: string; accuracyGuard: string } {

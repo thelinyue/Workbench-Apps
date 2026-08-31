@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import rulePackJson from './event-rule-pack.json';
 import type { PipelineProfiler } from './pipeline-profiler';
-import { classifyV1Source, type V1SourceType } from './source-classifier';
+import { classifyV1Source, type V1InputSourceType } from './source-classifier';
 
 export type Severity = 'critical' | 'warning' | 'info';
 export type Confidence = 'confirmed' | 'high' | 'medium' | 'low';
@@ -23,7 +23,7 @@ interface RecommendationRequest { kind: 'smart' | 'raid'; resource: string; }
 const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume'])), regex: z.string(), type: z.string() })) });
 const rulePack = rulePackSchema.parse(rulePackJson);
 type CompiledEventRule = (typeof rulePack.eventRules)[number] & { pattern: RegExp };
-const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume'] as V1SourceType[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1SourceType, CompiledEventRule[]>;
+const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume'] as V1InputSourceType[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1InputSourceType, CompiledEventRule[]>;
 // 内核来源的大多数行是无异常心跳；该集合覆盖当前所有 kernel 规则的触发词，预筛选命中后仍由原规则决定诊断结果。
 const kernelEventCandidate = /\b(?:error|timeout|timed out|reset controller|device not ready|hard resetting|failed|failure|link(?: is)? down|not recognized|not found|medium|uncorrectable|panic|out of memory|oom-kill|killed process|watchdog|uncleanly|orphan inode|recovery complete|corrupt\w*|read-?only|blocked for more than|bch_data_insert_keys)\b/i;
 

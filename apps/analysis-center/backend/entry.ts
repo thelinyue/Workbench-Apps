@@ -1,5 +1,6 @@
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import { AnalysisCenterService } from './lib/services/analysis-center-service';
 import { AnalysisTaskService } from './lib/services/analysis-task-service';
@@ -102,7 +103,8 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           const extractionRoot = resolve(diagnosticPackage.extractPath);
           if (isAbsolute(relative(extractionRoot, sourcePath)) || relative(extractionRoot, sourcePath).startsWith('..')) throw new Error('证据源文件路径无效。');
           try {
-            const lines = (await readFile(sourcePath, 'utf8')).split(/\r?\n/);
+            const sourceContent = await readFile(sourcePath);
+            const lines = (sourcePath.toLowerCase().endsWith('.gz') ? gunzipSync(sourceContent) : sourceContent).toString('utf8').split(/\r?\n/);
             const start = Math.max(0, evidence.lineNumber - 4);
             return { available: true, startLineNumber: start + 1, lines: lines.slice(start, evidence.lineNumber + 3) };
           } catch {

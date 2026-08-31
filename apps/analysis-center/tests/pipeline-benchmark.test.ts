@@ -20,7 +20,7 @@ describe('Pipeline 真实包性能基准', () => {
     directories.push(root);
     const archivePath = join(root, `nas_server_log_${sentinel}.zip`);
     await createZip(archivePath, [
-      { name: 'DEVICE_20260830192714_syslog', content: `2026-08-30T19:27:14+08:00 kernel: Buffer I/O error on dev sdc ${sentinel}` },
+      { name: 'DEVICE_20260830192714_syslog', content: `2026-08-30T19:27:14+08:00 UPS ups0@localhost on battery ${sentinel}` },
       { name: `private_${sentinel}.xlog.gz`, content: gzipSync(`2026-08-30T19:28:00+08:00 kernel: Buffer I/O error on dev sdz ${sentinel}`) }
     ]);
 
@@ -36,7 +36,7 @@ describe('Pipeline 真实包性能基准', () => {
     });
     expect(report.counters).toMatchObject({ filesDiscovered: 2, filesIgnored: 1, filesRead: 1, linesProcessed: 1, eventsCreated: 1, findingsCreated: 1, evidenceRetained: 1 });
     expect(report.stages.find((stage) => stage.name === 'persistence')?.duration.p50Ms).toBeGreaterThanOrEqual(0);
-    expect(report.topFiles[0]).toMatchObject({ alias: 'kernel-01', sourceType: 'kernel', linesProcessed: 1, eventsCreated: 1, evidenceRetained: 1 });
+    expect(report.topFiles[0]).toMatchObject({ alias: 'format-rule-01', sourceType: 'format-rule', linesProcessed: 1, eventsCreated: 1, evidenceRetained: 1 });
     expect(serialized).not.toContain(sentinel);
     expect(serialized).not.toContain(archivePath);
   });

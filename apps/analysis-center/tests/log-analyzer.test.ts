@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { builtInAnalyzerRules } from '../backend/lib/analysis/built-in-rules';
-import { analyzeExtractedDirectory, type AnalyzerRuleConfig } from '../backend/lib/analysis/log-analyzer';
+import { analyzeExtractedDirectory, analyzeExtractedDirectoryWithStats, type AnalyzerRuleConfig } from '../backend/lib/analysis/log-analyzer';
 
 const directories: string[] = [];
 const rules: AnalyzerRuleConfig = {
@@ -143,5 +143,20 @@ describe('内置日志分析引擎', () => {
     ].join('\n'), 'utf8');
 
     await expect(analyzeExtractedDirectory(extractDirectory, builtInAnalyzerRules.tgz)).resolves.toEqual({ files: [] });
+  });
+
+  it('带统计的扫描只读取选中规则声明的文件并返回处理行数', async () => {
+    const extractDirectory = await mkdtemp(join(tmpdir(), 'workbench-rule-scan-stats-'));
+    directories.push(extractDirectory);
+    await writeFile(join(extractDirectory, 'kern'), 'nvme I/O Error: controller failed\n', 'utf8');
+    await writeFile(join(extractDirectory, 'unrelated.log'), 'nvme I/O Error: should not be read\n', 'utf8');
+
+    const result = await analyzeExtractedDirectoryWithStats(extractDirectory, {
+      version: 'test',
+      files: [{ name: 'kern', category: '内核服务', keywords: [{ term: 'nvme.*I/O Error', result: 'NVMe I/O 错误', regex: true }] }]
+    });
+
+    expect(result).toMatchObject({ processedFiles: 2, matchedFiles: 1, processedLines: 1 });
+    expect(result.analysis.files).toHaveLength(1);
   });
 });

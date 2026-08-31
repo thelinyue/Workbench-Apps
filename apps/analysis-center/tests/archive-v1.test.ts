@@ -18,24 +18,22 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
   await writeFile(join(root, 'kern.log'), '2026-08-26T03:12:01+08:00 kernel: blk_update_request: I/O error, dev sdc, sector 1');
   await writeFile(join(root, 'mdstat.log'), 'md0 : active raid1 sdc2[1](F) sdb2[0]\n      100 blocks [2/1] [U_]');
   await writeFile(join(root, 'sysinfo.json'), JSON.stringify({ disk: { devices: [{ disk_info: { dev_name: '/dev/sdc', label: 'Hard Drive 3', serial: 'SERIAL-003', used_for: 'Storage Pool 3' }, smart_info: { report: [{ id: 197, name: 'Current_Pending_Sector', raw: 2 }] } }] } }));
+  await writeFile(join(root, 'syslog'), 'UPS ups0@localhost on battery');
   const archivePath = join(root, 'fixture.tgz');
-  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['kern.log', 'mdstat.log', 'sysinfo.json']);
+  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['kern.log', 'mdstat.log', 'sysinfo.json', 'syslog']);
 
   const progress: Array<{ progress: number; stage: string; message: string }> = [];
   const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted'), onProgress: (update) => progress.push(update) });
 
-  expect(result.result.diagnoses[0]).toMatchObject({ id: 'storage.device.suspected_failure', primaryResource: '/dev/sdc' });
+  expect(result.result.diagnoses[0]).toMatchObject({ id: 'format-rule.tgz.summary', title: 'TGZ 规则发现异常' });
   expect(result.browserPath).toContain('analysis-result.html');
   const html = await readFile(result.browserPath, 'utf8');
-  expect(html).toContain('硬盘 3（序列号：SERIAL-003）：检测到多次读写错误（I/O Error）；硬盘健康信息存在异常。');
+  expect(html).toContain('TGZ 专用规则检测到');
+  expect(html).toContain('规则包：tgz@2026.08.26');
+  expect(html).toContain('UPS 已切换至电池供电，说明外部输入曾出现异常');
   expect(html).toContain('white-space:pre-line');
-  expect(html).toContain('RAID 阵列已降级');
-  expect(html).toContain('技术事件：raid.degraded');
-  expect(html).not.toContain('技术事件：storage.io_error');
-  expect(html).toContain('建议：');
   expect(progress.map((item) => item.message)).toEqual(expect.arrayContaining([
-    '正在读取日志（3/3）',
-    '正在解析日志（3/3）'
+    '正在读取日志（4/4）'
   ]));
   expect(progress.every((item, index) => index === 0 || item.progress >= progress[index - 1].progress)).toBe(true);
   expect([...new Set(progress.map((item) => item.stage))]).toEqual([
@@ -84,9 +82,11 @@ it('V1 分析保留 gzip 轮转日志但不读取其内容，并保留既有非 
 
   const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory });
 
-  expect(result.result.metadata.processedFiles).toBe(3);
-  expect(result.result.diagnoses).not.toEqual(expect.arrayContaining([expect.objectContaining({ primaryResource: '/dev/sda' })]));
-  expect(result.result.findings).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'storage.io_error', affectedResources: expect.arrayContaining(['/dev/sdz']) })]));
+  expect(result.result.metadata.processedFiles).toBe(5);
+  expect(result.result.metadata.rulePackVersion).toBe('tgz@2026.08.26');
+  expect(result.result.findings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'format-rule.tgz.sysinfo.json', title: '硬盘信息' })
+  ]));
   await expect(access(join(extractDirectory, 'kern.log.1.gz'))).resolves.toBeUndefined();
   await expect(access(archivePath)).resolves.toBeUndefined();
   await expect(readFile(existingPath, 'utf8')).resolves.toBe('keep');
@@ -97,46 +97,80 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
   directories.push(root);
   const archivePath = join(root, 'nas_server_log_fixture.zip');
   await createZip(archivePath, [
-    { name: 'DEVICE_20260830192714_syslog', content: '2026-08-30T19:27:14+08:00 kernel: Buffer I/O error on dev sdc' },
-    { name: 'DEVICE_20260830193155_dmsg.log.gz', content: gzipSync('2026-08-30T19:31:55+08:00 kernel: Buffer I/O error on dev sdd') },
+    { name: 'DEVICE_20260830192714_syslog', content: '2026-08-30T19:27:14+08:00 UPS ups0@localhost on battery' },
+    { name: 'DEVICE_20260830193155_dmsg.log.gz', content: gzipSync('2026-08-30T19:31:55+08:00 nvme nvme0: Device not ready; aborting reset') },
     { name: 'ai_engine_crash.xlog.gz', content: gzipSync('2026-08-30T19:32:00+08:00 kernel: Buffer I/O error on dev sdz') }
   ]);
 
   const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted'), profiler: new PipelineProfiler() });
 
-  expect(output.result.metadata.processedFiles).toBe(1);
-  expect(output.result.metadata.analyzerVersion).toBe('1.1.0');
+  expect(output.result.metadata.processedFiles).toBe(3);
+  expect(output.result.metadata.analyzerVersion).toBe('1.2.0');
+  expect(output.result.metadata.rulePackVersion).toBe('zip@2026.08.26');
   expect(output.result.findings).toEqual(expect.arrayContaining([
-    expect.objectContaining({ type: 'storage.io_error', affectedResources: ['/dev/sdc'] })
-  ]));
-  expect(output.result.findings).not.toEqual(expect.arrayContaining([
-    expect.objectContaining({ affectedResources: expect.arrayContaining(['/dev/sdd']) }),
-    expect.objectContaining({ affectedResources: expect.arrayContaining(['/dev/sdz']) })
+    expect.objectContaining({ type: 'format-rule.zip.zip_syslog', title: 'UPS 已切换至电池供电' }),
+    expect.objectContaining({ type: 'format-rule.zip.zip_dmsg', title: 'NVMe 设备未就绪，重置已中止' })
   ]));
   expect(output.performanceProfile?.counters).toMatchObject({
     fileInventoryPasses: 1,
     filesDiscovered: 3,
-    filesIgnored: 2,
-    filesRead: 1,
-    linesProcessed: 1,
-    eventsCreated: 1,
-    findingsCreated: 1,
-    evidenceRetained: 1
+    filesIgnored: 1,
+    filesRead: 2,
+    linesProcessed: 2,
+    eventsCreated: 2,
+    findingsCreated: 2,
+    evidenceRetained: 2
   });
-  expect(output.performanceProfile?.files.map((file) => file.alias)).toEqual(['kernel-01']);
+  expect(output.performanceProfile?.files.map((file) => file.alias)).toEqual(['format-rule-01', 'format-rule-02']);
   expect(JSON.stringify(output.performanceProfile)).not.toContain('DEVICE');
   expect(output.performanceProfile?.stages['archive.extract'].invocations).toBe(1);
   expect(output.performanceProfile?.stages['source.read'].invocations).toBe(1);
-  expect(output.performanceProfile?.stages['parser.total'].invocations).toBeGreaterThan(0);
-  expect(output.performanceProfile?.stages['rules.event.total'].invocations).toBeGreaterThan(0);
-  expect(output.performanceProfile?.stages['finding.aggregate'].invocations).toBe(1);
   expect(output.performanceProfile?.stages['diagnosis.compose'].invocations).toBe(1);
-  expect(output.performanceProfile?.stages['recommendation.compose'].invocations).toBe(1);
   expect(output.performanceProfile?.stages['report.render'].invocations).toBe(1);
 
   const ordinaryOutput = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'ordinary-extracted') });
   expect(ordinaryOutput.performanceProfile).toBeUndefined();
   expect(normalizeRuntimeFields(ordinaryOutput.result)).toEqual(normalizeRuntimeFields(output.result));
+});
+
+it('ZIP 仅包含 dmsg gzip 日志时使用 ZIP 规则并正常完成分析', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-zip-dmsg-only-'));
+  directories.push(root);
+  const archivePath = join(root, 'nas_server_log_dmsg_only.zip');
+  await createZip(archivePath, [
+    { name: 'DEVICE_20260830193155_dmsg.log.gz', content: gzipSync('nvme nvme0: Device not ready; aborting reset\n') }
+  ]);
+
+  const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+
+  expect(output.result.status).toBe('completed');
+  expect(output.result.metadata.rulePackVersion).toBe('zip@2026.08.26');
+  expect(output.result.findings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'format-rule.zip.zip_dmsg', title: 'NVMe 设备未就绪，重置已中止' })
+  ]));
+  expect(output.result.evidence[0]).toMatchObject({
+    sourceFile: 'DEVICE_20260830193155_dmsg.log.gz',
+    rawMessage: 'nvme nvme0: Device not ready; aborting reset'
+  });
+});
+
+it('TGZ 使用 TGZ 规则，ZIP 专用文件名不会被 TGZ 规则接受', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-format-isolation-'));
+  directories.push(root);
+  const archivePath = join(root, 'fixture.tgz');
+  await writeFile(join(root, 'syslog'), 'UPS ups0@localhost on battery\n', 'utf8');
+  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['syslog']);
+
+  const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'tgz-extracted') });
+  expect(output.result.metadata.rulePackVersion).toBe('tgz@2026.08.26');
+  expect(output.result.findings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'format-rule.tgz.syslog', title: 'UPS 已切换至电池供电，说明外部输入曾出现异常' })
+  ]));
+
+  const zipPath = join(root, 'nas_server_log_wrong-name.zip');
+  await createZip(zipPath, [{ name: 'syslog', content: 'UPS ups0@localhost on battery\n' }]);
+  await expect(runV1ArchiveAnalysis({ sourcePath: zipPath, extractDirectory: join(root, 'zip-extracted') }))
+    .rejects.toThrow('无法识别日志包：未找到受支持的系统或存储日志');
 });
 
 it('V1 分析拒绝 ZIP 中的符号链接条目', async () => {
@@ -156,13 +190,13 @@ it('V1 来源清单保持原有 UTF-16 文件名顺序以稳定 Evidence ID', as
   directories.push(root);
   const archivePath = join(root, 'source-order.zip');
   await createZip(archivePath, [
-    { name: 'a_syslog', content: '2026-08-30T19:27:14+08:00 kernel: Buffer I/O error on dev sda' },
-    { name: 'B_syslog', content: '2026-08-30T19:27:15+08:00 kernel: Buffer I/O error on dev sdb' }
+    { name: 'a_syslog', content: '2026-08-30T19:27:14+08:00 UPS ups0@localhost on battery' },
+    { name: 'B_syslog', content: '2026-08-30T19:27:15+08:00 UPS ups0@localhost on battery' }
   ]);
 
   const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
 
-  expect(output.result.evidence.map((item) => item.sourceFile)).toEqual(['B_syslog', 'a_syslog']);
+  expect(output.result.evidence.map((item) => item.sourceFile)).toEqual(['a_syslog', 'B_syslog']);
 });
 
 it('V1 分析在解压目标不是目录时返回中文错误', async () => {

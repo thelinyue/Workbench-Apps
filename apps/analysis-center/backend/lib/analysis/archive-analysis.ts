@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { lstat, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pipeline } from 'node:stream/promises';
@@ -10,6 +10,7 @@ import { createDiagnosticArchiveGunzip } from './tgz-stream';
 import { getDiagnosticPackageFormat } from '../domain/diagnostic-package';
 import {
   analyzeExtractedDirectory,
+  analyzeExtractedDirectoryWithStats,
   type AnalysisResult,
   type AnalyzerRuleCatalog
 } from './log-analyzer';
@@ -17,10 +18,11 @@ import { escapeHtml, renderReportTemplate, reportCss, reportScript } from './rep
 import bootstrapCss from './static/bootstrap.min.css?raw';
 import bootstrapScript from './static/bootstrap.bundle.min.js?raw';
 import { analyzeStructuredExtract, type StructuredAnalysis } from './structured-analysis';
-import { analyzeV1Sources, type AnalysisResult as V1AnalysisResult } from '../analysis-v1/pipeline';
+import { buildV1ResultFromFormatRules } from '../analysis-v1/format-rule-adapter';
+import type { AnalysisResult as V1AnalysisResult } from '../analysis-v1/pipeline';
 import { type PipelineProfile, PipelineProfiler } from '../analysis-v1/pipeline-profiler';
-import { classifyV1Source } from '../analysis-v1/source-classifier';
 import { selectImportantFindings } from '../../../shared/finding-presentation';
+import { builtInAnalyzerRules } from './built-in-rules';
 import type { AnalysisTaskStage } from '../data/workspace-repository';
 
 export type AnalysisScope = 'comprehensive' | 'storage';
@@ -72,8 +74,8 @@ export function createAnalysisRuntimeTimings(): AnalysisRuntimeTimings {
 }
 
 /**
- * V1 归档入口只负责输入准备与单次来源读取；诊断语义完全由 analysis-v1 Pipeline 生成。
- * Legacy 的关键词扫描和旧报告函数保留在下方，不能从这个入口回退调用。
+ * 活动归档入口只执行当前归档格式对应的关键词规则，再将命中结果适配成 V1 AnalysisResult。
+ * 公共 Event Rule 和旧的全量报告入口都不参与这里的规则选择，确保两种格式严格隔离。
  */
 export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest, 'sourcePath' | 'extractDirectory' | 'onProgress'> & { profiler?: PipelineProfiler; runtimeTimings?: AnalysisRuntimeTimings }): Promise<V1ArchiveAnalysisResult> {
   const profiler = request.profiler;
@@ -110,10 +112,20 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
       ? profiler.measureAsync('archive.extract', extractArchive)
       : extractArchive());
     request.onProgress?.({ progress: 35, stage: 'parse-system-events', message: '正在识别系统与存储日志' });
-    const files = await collectV1Sources(request.extractDirectory, runtimeTimings, profiler, (processedFiles, totalFiles) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), stage: 'parse-system-events', message: `正在读取日志（${processedFiles}/${totalFiles}）` }));
-    if (!Object.keys(files).length) throw new Error('无法识别日志包：未找到受支持的系统或存储日志');
+    const scan = await measureRuntimeAsync(runtimeTimings, 'sourceReadMs', () => {
+      const scanOperation = () => analyzeExtractedDirectoryWithStats(
+        request.extractDirectory,
+        builtInAnalyzerRules[archiveFormat],
+        ({ processedFiles, totalFiles }) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), stage: 'parse-system-events', message: `正在读取日志（${processedFiles}/${totalFiles}）` })
+      );
+      return profiler ? profiler.measureAsync('source.read', scanOperation) : scanOperation();
+    });
+    if (scan.matchedFiles === 0) throw new Error('无法识别日志包：未找到受支持的系统或存储日志');
     request.onProgress?.({ progress: 55, stage: 'analyze-storage', message: '正在分析存储状态' });
-    const result = measureRuntime(runtimeTimings, 'pipelineAnalysisMs', () => analyzeV1Sources({ sourceName: basename(request.sourcePath), files, profiler, onProgress: ({ processedFiles, totalFiles, progress }) => request.onProgress?.({ progress: 55 + Math.round(progress * 0.3), stage: 'analyze-storage', message: `正在解析日志（${processedFiles}/${totalFiles}）` }) }));
+    const result = measureRuntime(runtimeTimings, 'pipelineAnalysisMs', () => profiler
+      ? profiler.measure('diagnosis.compose', () => buildV1ResultFromFormatRules({ sourceName: basename(request.sourcePath), format: archiveFormat, ruleVersion: builtInAnalyzerRules[archiveFormat].version, scan }))
+      : buildV1ResultFromFormatRules({ sourceName: basename(request.sourcePath), format: archiveFormat, ruleVersion: builtInAnalyzerRules[archiveFormat].version, scan }));
+    recordFormatScanProfile(profiler, archiveFormat, scan, result);
     request.onProgress?.({ progress: 85, stage: 'aggregate-anomalies', message: '正在聚合异常并关联诊断结论' });
     const browserPath = join(request.extractDirectory, 'analysis-result.html');
     const renderReport = () => writeFile(browserPath, renderV1Html(result), 'utf8');
@@ -127,60 +139,6 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
   } finally {
     runtimeTimings.totalMs += elapsedSince(totalStartedAt);
   }
-}
-
-/** 先收集并排序白名单文件，再逐一读取；这样进度稳定且结果不受文件系统枚举顺序影响。 */
-async function collectV1Sources(root: string, runtimeTimings: AnalysisRuntimeTimings, profiler?: PipelineProfiler, onProgress?: (processedFiles: number, totalFiles: number) => void): Promise<Record<string, string>> {
-  const files: Record<string, string> = {};
-  const candidates: Array<{ path: string; source: NonNullable<ReturnType<typeof classifyV1Source>> }> = [];
-  const visit = async (directory: string): Promise<void> => {
-    profiler?.increment('directoriesVisited');
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) { await visit(path); continue; }
-      if (!entry.isFile()) continue;
-      profiler?.increment('filesDiscovered');
-      const source = classifyV1Source(entry.name);
-      if (!source) { profiler?.increment('filesIgnored'); continue; }
-      candidates.push({ path, source });
-    }
-  };
-  const inventory = async () => {
-    profiler?.increment('fileInventoryPasses');
-    await visit(root);
-    // 保持原字符串数组的 UTF-16 排序语义，避免性能埋点改变 Evidence ID 和结果顺序。
-    candidates.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
-  };
-  await measureRuntimeAsync(runtimeTimings, 'sourceInventoryMs', () => profiler
-    ? profiler.measureAsync('input.recognition', inventory)
-    : inventory());
-
-  const readCandidates = async () => {
-    for (let index = 0; index < candidates.length; index += 1) {
-      const { path, source } = candidates[index];
-      const startedAt = profiler?.mark();
-      try {
-        const content = await readFile(path);
-        const fileKey = path.slice(root.length + 1).replaceAll('\\', '/');
-        files[fileKey] = content.toString('utf8');
-        if (profiler) {
-          profiler.increment('filesRead');
-          profiler.increment('bytesRead', content.byteLength);
-          profiler.increment('decodedBytes', content.byteLength);
-          profiler.recordFile(fileKey, source, { bytesRead: content.byteLength, decodedBytes: content.byteLength, readDurationMs: startedAt === undefined ? 0 : profiler.elapsed(startedAt) });
-        }
-      }
-      catch (error) {
-        profiler?.increment('filesIgnored');
-        console.error(`读取 V1 分析日志失败，已跳过：${path}；原因：${error instanceof Error ? error.message : String(error)}`);
-      }
-      onProgress?.(index + 1, candidates.length);
-    }
-  };
-  await measureRuntimeAsync(runtimeTimings, 'sourceReadMs', () => profiler
-    ? profiler.measureAsync('source.read', readCandidates)
-    : readCandidates());
-  return files;
 }
 
 type RuntimeStageName = Exclude<keyof AnalysisRuntimeTimings, 'totalMs'>;
@@ -199,6 +157,32 @@ function measureRuntime<T>(timings: AnalysisRuntimeTimings, stage: RuntimeStageN
 
 function elapsedSince(startedAt: number): number {
   return Math.max(0, performance.now() - startedAt);
+}
+
+/** 让开发性能快照保留格式扫描的真实文件和规则指标，但不伪造公共 V1 Parser 阶段。 */
+function recordFormatScanProfile(profiler: PipelineProfiler | undefined, format: 'tgz' | 'zip', scan: Awaited<ReturnType<typeof analyzeExtractedDirectoryWithStats>>, result: V1AnalysisResult): void {
+  if (!profiler) return;
+  const processedEvents = scan.analysis.files.reduce((count, file) => count + file.issues.length, 0);
+  profiler.increment('fileInventoryPasses');
+  profiler.increment('filesDiscovered', scan.processedFiles);
+  profiler.increment('filesRead', scan.matchedFiles);
+  profiler.increment('filesIgnored', scan.processedFiles - scan.matchedFiles);
+  profiler.increment('linesProcessed', scan.processedLines);
+  profiler.increment('candidateLines', scan.processedLines);
+  profiler.increment('ruleInvocations', processedEvents);
+  profiler.increment('ruleMatches', processedEvents);
+  profiler.increment('eventsCreated', processedEvents);
+  profiler.increment('findingsCreated', result.findings.length);
+  profiler.increment('evidenceRetained', result.evidence.length);
+  profiler.increment('diagnosesCreated', result.diagnoses.length);
+  profiler.increment('recommendationsCreated', result.recommendations.length);
+  profiler.increment('findingEvidenceReferences', result.findings.reduce((count, finding) => count + finding.evidenceIds.length, 0));
+  profiler.increment('uniqueFindingEvidenceReferences', new Set(result.findings.flatMap((finding) => finding.evidenceIds)).size);
+  for (const file of scan.fileStats ?? []) {
+    profiler.recordFile(file.file, 'format-rule', { bytesRead: file.bytesRead, decodedBytes: file.decodedBytes });
+    profiler.addFileMetrics(file.file, { linesProcessed: file.linesProcessed, eventsCreated: file.issueCount, evidenceRetained: file.issueCount });
+    profiler.recordRule(`format-rule.${format}.${file.ruleName}`, file.issueCount, file.issueCount > 0, 0);
+  }
 }
 
 function renderV1Html(result: V1AnalysisResult): string {
