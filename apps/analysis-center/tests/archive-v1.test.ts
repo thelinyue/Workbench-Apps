@@ -126,6 +126,20 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
   expect(normalizeRuntimeFields(ordinaryOutput.result)).toEqual(normalizeRuntimeFields(output.result));
 });
 
+it('V1 来源清单保持原有 UTF-16 文件名顺序以稳定 Evidence ID', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-source-order-'));
+  directories.push(root);
+  const archivePath = join(root, 'source-order.zip');
+  await createZip(archivePath, [
+    { name: 'a_syslog', content: '2026-08-30T19:27:14+08:00 kernel: Buffer I/O error on dev sda' },
+    { name: 'B_syslog', content: '2026-08-30T19:27:15+08:00 kernel: Buffer I/O error on dev sdb' }
+  ]);
+
+  const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+
+  expect(output.result.evidence.map((item) => item.sourceFile)).toEqual(['B_syslog', 'a_syslog']);
+});
+
 it('V1 分析在解压目标不是目录时返回中文错误', async () => {
   const root = await mkdtemp(join(tmpdir(), 'analysis-v1-invalid-extract-'));
   directories.push(root);

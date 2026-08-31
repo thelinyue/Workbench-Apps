@@ -103,7 +103,8 @@ async function collectV1Sources(root: string, profiler?: PipelineProfiler, onPro
   const inventory = async () => {
     profiler?.increment('fileInventoryPasses');
     await visit(root);
-    candidates.sort((left, right) => left.path.localeCompare(right.path));
+    // 保持原字符串数组的 UTF-16 排序语义，避免性能埋点改变 Evidence ID 和结果顺序。
+    candidates.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
   };
   if (profiler) await profiler.measureAsync('input.recognition', inventory);
   else await inventory();
