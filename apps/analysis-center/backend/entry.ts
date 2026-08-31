@@ -85,7 +85,7 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
         case 'tasks.clear-completed': return tasks.clearCompleted();
         case 'reports.path': return getPackage(readString(payload, 'packageId')).reportPath ?? null;
         case 'results.get': return repository.getAnalysisResult(readString(payload, 'packageId')) ?? null;
-        case 'results.recent': return repository.listRecentAnalysisResults();
+        case 'results.recent': return repository.listRecentAnalysisSummaries();
         case 'results.sysinfo-report-path': return sysinfoReports.getReportPath(getPackage(readString(payload, 'packageId')));
         case 'results.html': {
           const path = getPackage(readString(payload, 'packageId')).reportPath;

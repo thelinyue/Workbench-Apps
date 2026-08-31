@@ -14,6 +14,7 @@ export interface AnalysisTaskRecord { id: string; packageId: string; scope: 'com
 export interface AnalysisRecord { id: string; packageId: string; taskId: string; status: AnalysisTaskRecord['status']; createdAt: string; updatedAt: string; }
 export interface MonitorSettings { directory?: string; enabled: boolean; autoAnalyzeEnabled: boolean; scanIntervalSeconds: number; }
 export interface AnalysisFailureRecord { taskId: string; packageId: string; stage: string; errorMessage: string; inputMetadata: Record<string, string>; createdAt: string; }
+export interface AnalysisResultSummary { diagnoses: Array<Pick<AnalysisResult['diagnoses'][number], 'title' | 'severity'>>; }
 
 const COMPLETED_TASK_STATUSES = ['succeeded', 'failed', 'cancelled'] as const;
 
@@ -137,9 +138,22 @@ export class WorkspaceRepository {
     return row ? JSON.parse(row.resultJson) as AnalysisResult : undefined;
   }
 
-  public listRecentAnalysisResults(limit = 20): Array<{ packageId: string; result: AnalysisResult }> {
-    return (this.database.prepare('SELECT package_id AS packageId, result_json AS resultJson FROM analysis_results ORDER BY created_at DESC LIMIT ?').all(Math.min(Math.max(1, limit), 20)) as Array<{ packageId: string; resultJson: string }>)
-      .map((row) => ({ packageId: row.packageId, result: JSON.parse(row.resultJson) as AnalysisResult }));
+  /** 首屏只读取列表所需的首条诊断摘要，完整 AnalysisResult 由 getAnalysisResult 按需返回。 */
+  public listRecentAnalysisSummaries(limit = 20): Array<{ packageId: string; result: AnalysisResultSummary }> {
+    const rows = this.database.prepare(`
+      SELECT package_id AS packageId,
+        json_extract(result_json, '$.diagnoses[0].title') AS diagnosisTitle,
+        json_extract(result_json, '$.diagnoses[0].severity') AS diagnosisSeverity
+      FROM analysis_results
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(Math.min(Math.max(1, limit), 20)) as Array<{ packageId: string; diagnosisTitle: string | null; diagnosisSeverity: string | null }>;
+    return rows.map((row) => ({
+      packageId: row.packageId,
+      result: row.diagnosisTitle !== null && row.diagnosisSeverity !== null
+        ? { diagnoses: [{ title: row.diagnosisTitle, severity: row.diagnosisSeverity as AnalysisResultSummary['diagnoses'][number]['severity'] }] }
+        : { diagnoses: [] }
+    }));
   }
 
   /** Failed 任务只保存可读诊断信息和输入标识，绝不把失败时的原始日志写入数据库。 */

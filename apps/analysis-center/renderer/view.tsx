@@ -17,6 +17,7 @@ interface Finding { id: string; type: string; title: string; summary: string; se
 interface Evidence { id: string; timestamp?: string; timestampPrecision: string; sourceFile: string; lineNumber?: number; eventType: string; resource?: string; rawMessage: string; }
 interface Diagnosis { id: string; title: string; summary: string; severity: string; confidence: string; affectedResources: string[]; affectedDeviceResources?: string[]; findingIds: string[]; userConclusion?: string; engineerConclusion?: string; }
 interface Result { diagnoses: Diagnosis[]; findings: Finding[]; evidence: Evidence[]; deviceAssessments?: Array<{ resource: string; label?: string; serial?: string; usedFor?: string; smartRiskAttributes: Array<{ id: number; name: string; raw: number }>; ioErrorCount: number; }>; recommendations: Array<{ id: string; priority: number; title: string; reason: string; risk: string }>; metadata: { source: string; missingData: string[] }; }
+interface ResultSummary { diagnoses: Array<Pick<Diagnosis, 'title' | 'severity'>>; }
 interface EvidenceContext { available: boolean; lines: string[]; message?: string; }
 interface PackageDeletionPreview { packageCount: number; extractPaths: string[]; confirmationToken: string; }
 interface PackageRecordDeletionPreview { packageCount: number; taskCount: number; caseCount: number; analysisRecordCount: number; reportRecordCount: number; confirmationToken: string; }
@@ -34,7 +35,7 @@ export function AnalysisCenterApp() {
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [monitor, setMonitor] = useState<MonitorSettings>({ enabled: false, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
-  const [recentResults, setRecentResults] = useState<Array<{ packageId: string; result: Result }>>([]);
+  const [recentResults, setRecentResults] = useState<Array<{ packageId: string; result: ResultSummary }>>([]);
   const [resultPackageId, setResultPackageId] = useState<string>();
   const [result, setResult] = useState<Result>();
   const [message, setMessage] = useState('');
@@ -65,7 +66,7 @@ export function AnalysisCenterApp() {
 
   const load = useMemo(() => createLatestLoad(
     () => Promise.all([
-      host.invoke<PackageItem[]>('packages.list'), host.invoke<TaskItem[]>('tasks.list'), host.invoke<MonitorSettings>('settings.get'), host.invoke<{ state: string; warning?: string }>('monitor.status'), host.invoke<Array<{ packageId: string; result: Result }>>('results.recent')
+      host.invoke<PackageItem[]>('packages.list'), host.invoke<TaskItem[]>('tasks.list'), host.invoke<MonitorSettings>('settings.get'), host.invoke<{ state: string; warning?: string }>('monitor.status'), host.invoke<Array<{ packageId: string; result: ResultSummary }>>('results.recent')
     ]),
     ([nextPackages, nextTasks, nextMonitor, nextMonitorStatus, nextRecentResults]) => {
       setPackages(nextPackages); setTasks(nextTasks); setMonitor(nextMonitor); setMonitorStatus(nextMonitorStatus); setRecentResults(nextRecentResults);
@@ -178,7 +179,7 @@ export function AnalysisCenterApp() {
 }
 
 /** 诊断包列表复用同一行结构，避免各个状态分区的文件信息呈现出现偏差。 */
-function WorkspaceList({ title, items, emptyText, action, onChanged, onError, failureByPackageId, resultByPackageId, runtimeTimingsByPackageId, onAnalyze, enableBatchDeletion = false, highlightedPackageId, highlightedRef }: { title: string; items: PackageItem[]; emptyText: string; action: (item: PackageItem) => React.ReactNode; onChanged: () => Promise<void>; onError: (error: unknown) => void; failureByPackageId?: Map<string, string>; resultByPackageId?: Map<string, Result>; runtimeTimingsByPackageId?: Map<string, AnalysisRuntimeTimingsView>; onAnalyze?: (packageId: string) => Promise<void>; enableBatchDeletion?: boolean; highlightedPackageId?: string; highlightedRef?: React.MutableRefObject<HTMLElement | null> }) {
+function WorkspaceList({ title, items, emptyText, action, onChanged, onError, failureByPackageId, resultByPackageId, runtimeTimingsByPackageId, onAnalyze, enableBatchDeletion = false, highlightedPackageId, highlightedRef }: { title: string; items: PackageItem[]; emptyText: string; action: (item: PackageItem) => React.ReactNode; onChanged: () => Promise<void>; onError: (error: unknown) => void; failureByPackageId?: Map<string, string>; resultByPackageId?: Map<string, ResultSummary>; runtimeTimingsByPackageId?: Map<string, AnalysisRuntimeTimingsView>; onAnalyze?: (packageId: string) => Promise<void>; enableBatchDeletion?: boolean; highlightedPackageId?: string; highlightedRef?: React.MutableRefObject<HTMLElement | null> }) {
   const [openMenuPackageId, setOpenMenuPackageId] = useState<string>();
   const [deletingPackageId, setDeletingPackageId] = useState<string>();
   const [pendingDeletion, setPendingDeletion] = useState<PendingPackageDeletion>();
