@@ -1,0 +1,344 @@
+{
+  "schemaVersion": 1,
+  "sampleId": "real-zip-20260830",
+  "benchmarkDate": "2026-08-30",
+  "mode": "main-process-pipeline-with-production-persistence",
+  "workerStartupIncluded": false,
+  "warmupRuns": 1,
+  "measuredRuns": 5,
+  "runtime": {
+    "nodeVersion": "24.18.0",
+    "platform": "win32",
+    "architecture": "x64"
+  },
+  "input": {
+    "archiveSizeBytes": 41154086,
+    "archiveEntries": 1069
+  },
+  "isolation": {
+    "totalRunCount": 6,
+    "uniqueExtractDirectoryCount": 6,
+    "uniqueDatabaseCount": 6,
+    "freshPerRun": true
+  },
+  "semanticEquivalence": {
+    "equivalent": true,
+    "ignoredRuntimeFields": [
+      "AnalysisResult.id",
+      "metadata.startTime",
+      "metadata.completeTime",
+      "metadata.duration"
+    ]
+  },
+  "totalDuration": {
+    "minMs": 1403.425,
+    "p50Ms": 1533.009,
+    "maxMs": 1714.131
+  },
+  "stages": [
+    {
+      "name": "input.recognition",
+      "duration": {
+        "minMs": 5.787,
+        "p50Ms": 6.514,
+        "maxMs": 10.856
+      },
+      "shareOfTotalP50Percent": 0.42
+    },
+    {
+      "name": "archive.extract",
+      "duration": {
+        "minMs": 1234.869,
+        "p50Ms": 1357.053,
+        "maxMs": 1549.012
+      },
+      "shareOfTotalP50Percent": 88.52
+    },
+    {
+      "name": "source.read",
+      "duration": {
+        "minMs": 9.834,
+        "p50Ms": 10.159,
+        "maxMs": 11.223
+      },
+      "shareOfTotalP50Percent": 0.66
+    },
+    {
+      "name": "parser.total",
+      "duration": {
+        "minMs": 47.339,
+        "p50Ms": 52.335,
+        "maxMs": 54.58
+      },
+      "shareOfTotalP50Percent": 3.41
+    },
+    {
+      "name": "rules.event.total",
+      "duration": {
+        "minMs": 54.902,
+        "p50Ms": 56.82,
+        "maxMs": 60.164
+      },
+      "shareOfTotalP50Percent": 3.71
+    },
+    {
+      "name": "finding.aggregate",
+      "duration": {
+        "minMs": 0.066,
+        "p50Ms": 0.068,
+        "maxMs": 0.079
+      },
+      "shareOfTotalP50Percent": 0
+    },
+    {
+      "name": "diagnosis.compose",
+      "duration": {
+        "minMs": 0.347,
+        "p50Ms": 0.411,
+        "maxMs": 0.421
+      },
+      "shareOfTotalP50Percent": 0.03
+    },
+    {
+      "name": "recommendation.compose",
+      "duration": {
+        "minMs": 0.026,
+        "p50Ms": 0.029,
+        "maxMs": 0.031
+      },
+      "shareOfTotalP50Percent": 0
+    },
+    {
+      "name": "report.render",
+      "duration": {
+        "minMs": 0.654,
+        "p50Ms": 0.847,
+        "maxMs": 0.966
+      },
+      "shareOfTotalP50Percent": 0.06
+    },
+    {
+      "name": "persistence",
+      "duration": {
+        "minMs": 10,
+        "p50Ms": 11.852,
+        "maxMs": 17.871
+      },
+      "shareOfTotalP50Percent": 0.77
+    }
+  ],
+  "counters": {
+    "fileInventoryPasses": 1,
+    "directoriesVisited": 1,
+    "filesDiscovered": 1069,
+    "filesIgnored": 1066,
+    "filesRead": 3,
+    "bytesRead": 2265784,
+    "decodedBytes": 2395135,
+    "structuredFilesParsed": 0,
+    "linesProcessed": 28927,
+    "candidateLines": 4106,
+    "ruleInvocations": 127286,
+    "ruleMatches": 57,
+    "eventsCreated": 57,
+    "findingsCreated": 19,
+    "evidenceRetained": 57,
+    "diagnosesCreated": 0,
+    "recommendationsCreated": 0,
+    "duplicateEvents": 0,
+    "duplicateEvidence": 0,
+    "findingEvidenceReferences": 57,
+    "uniqueFindingEvidenceReferences": 57
+  },
+  "investigation": {
+    "fileInventoryPasses": 1,
+    "repeatedFileScanDetected": false,
+    "regexInvocationsPerCandidateLine": 31,
+    "duplicateEvents": 0,
+    "duplicateEvidence": 0,
+    "findingEvidenceReferences": 57,
+    "uniqueFindingEvidenceReferences": 57,
+    "duplicateFindingEvidenceReferences": 0,
+    "structuredFilesParsed": 0,
+    "structuredTextScanDetected": false
+  },
+  "diagnostics": {
+    "diagnosisIds": [],
+    "recommendations": []
+  },
+  "topStages": [
+    {
+      "rank": 1,
+      "stage": "archive.extract",
+      "p50Ms": 1357.053,
+      "shareOfTotalP50Percent": 88.52,
+      "focus": "诊断包解压与成员落盘",
+      "optimizationDirection": "评估解压 I/O、压缩格式和临时目录写入成本",
+      "accuracyGuard": "不得跳过归档成员或复用含旧文件的解压目录"
+    },
+    {
+      "rank": 2,
+      "stage": "rules.event.total",
+      "p50Ms": 56.82,
+      "shareOfTotalP50Percent": 3.71,
+      "focus": "Event Rule Regex 扫描",
+      "optimizationDirection": "检查候选行比例、全规则调用和重复命中",
+      "accuracyGuard": "不得减少规则覆盖、命中 Event 或关联 Evidence"
+    },
+    {
+      "rank": 3,
+      "stage": "parser.total",
+      "p50Ms": 52.335,
+      "shareOfTotalP50Percent": 3.41,
+      "focus": "结构化 Parser 与文本行解析",
+      "optimizationDirection": "检查 Parser 热点和不必要的中间对象",
+      "accuracyGuard": "结构化文件必须由对应 Parser 完整处理"
+    }
+  ],
+  "topFiles": [
+    {
+      "sourceType": "kernel",
+      "duration": {
+        "minMs": 94.383,
+        "p50Ms": 97.074,
+        "maxMs": 101.901
+      },
+      "bytesRead": 2073370,
+      "decodedBytes": 2073370,
+      "linesProcessed": 24590,
+      "eventsCreated": 19,
+      "evidenceRetained": 19,
+      "alias": "kernel-01"
+    },
+    {
+      "sourceType": "kernel",
+      "duration": {
+        "minMs": 6.544,
+        "p50Ms": 7.612,
+        "maxMs": 8.401
+      },
+      "bytesRead": 160825,
+      "decodedBytes": 160825,
+      "linesProcessed": 2055,
+      "eventsCreated": 19,
+      "evidenceRetained": 19,
+      "alias": "kernel-02"
+    },
+    {
+      "sourceType": "kernel",
+      "duration": {
+        "minMs": 6.878,
+        "p50Ms": 7.086,
+        "maxMs": 7.736
+      },
+      "bytesRead": 31589,
+      "decodedBytes": 160940,
+      "linesProcessed": 2282,
+      "eventsCreated": 19,
+      "evidenceRetained": 19,
+      "alias": "kernel-03"
+    }
+  ],
+  "topRules": [
+    {
+      "duration": {
+        "minMs": 1.016,
+        "p50Ms": 1.038,
+        "maxMs": 1.15
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "storage.timeout"
+    },
+    {
+      "duration": {
+        "minMs": 1.012,
+        "p50Ms": 1.038,
+        "maxMs": 1.113
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "system.oom_killer"
+    },
+    {
+      "duration": {
+        "minMs": 1.008,
+        "p50Ms": 1.036,
+        "maxMs": 1.108
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "storage.scsi.medium"
+    },
+    {
+      "duration": {
+        "minMs": 0.989,
+        "p50Ms": 1.031,
+        "maxMs": 1.086
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "storage.scsi.medium.device"
+    },
+    {
+      "duration": {
+        "minMs": 0.971,
+        "p50Ms": 1.014,
+        "maxMs": 1.059
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "filesystem.readonly"
+    },
+    {
+      "duration": {
+        "minMs": 0.943,
+        "p50Ms": 0.992,
+        "maxMs": 1.033
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "storage.device.unrecognized.named"
+    },
+    {
+      "duration": {
+        "minMs": 0.91,
+        "p50Ms": 0.984,
+        "maxMs": 1.012
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "storage.ata.error"
+    },
+    {
+      "duration": {
+        "minMs": 0.916,
+        "p50Ms": 0.977,
+        "maxMs": 1.02
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "storage.device.unrecognized.ata"
+    },
+    {
+      "duration": {
+        "minMs": 0.915,
+        "p50Ms": 0.973,
+        "maxMs": 1.012
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "storage.nvme.timeout_aborting"
+    },
+    {
+      "duration": {
+        "minMs": 0.945,
+        "p50Ms": 0.969,
+        "maxMs": 1.097
+      },
+      "invocations": 4106,
+      "matches": 0,
+      "ruleId": "storage.device_reset"
+    }
+  ]
+}
