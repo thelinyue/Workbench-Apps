@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import * as tar from 'tar';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AnalysisResult } from '../backend/lib/analysis-v1/pipeline';
+import { PipelineProfiler, type PipelineProfile } from '../backend/lib/analysis-v1/pipeline-profiler';
 import { WorkspaceRepository } from '../backend/lib/data/workspace-repository';
 import type { DiagnosticPackage } from '../backend/lib/domain/diagnostic-package';
 import { AnalysisTaskService, type AnalysisWorker } from '../backend/lib/services/analysis-task-service';
@@ -13,6 +14,49 @@ const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
 
 describe('分析任务单线程执行', () => {
+  it('仅在显式开启时回传完成持久化后的 Pipeline profile', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'analysis-task-profile-'));
+    directories.push(root);
+    const repository = new WorkspaceRepository(join(root, 'analysis-center.db'));
+    repository.upsertPackage(packageRecord('package-profiled', await createArchive(root, 'package-profiled')));
+    const worker = new FakeAnalysisWorker();
+    let workerData: Record<string, unknown> | undefined;
+    let completedProfile: PipelineProfile | undefined;
+    const service = new AnalysisTaskService(repository, {
+      createWorker: (_url, options) => {
+        workerData = options.workerData;
+        return worker;
+      },
+      performanceProfiling: {
+        onCompleted: (profile) => {
+          expect(repository.getAnalysisResult('package-profiled')).toEqual(successfulResult);
+          completedProfile = profile;
+        }
+      }
+    });
+
+    try {
+      await service.enqueue('package-profiled');
+      await vi.waitFor(() => expect(workerData).toMatchObject({ performanceProfiling: true }));
+      worker.emit('message', {
+        type: 'completed',
+        succeeded: true,
+        browserPath: join(root, 'result.html'),
+        analysisResult: successfulResult,
+        performanceProfile: new PipelineProfiler().snapshot()
+      });
+
+      await vi.waitFor(() => expect(completedProfile).toBeDefined());
+      expect(completedProfile?.stages.persistence.invocations).toBe(1);
+      expect(completedProfile?.stages.persistence.durationMs).toBeGreaterThanOrEqual(0);
+      expect(repository.getAnalysisResult('package-profiled')).toEqual(successfulResult);
+      expect(JSON.stringify(repository.getAnalysisResult('package-profiled'))).not.toContain('timerReads');
+    } finally {
+      await service.close();
+      repository.close();
+    }
+  });
+
   it('失败后不重试并继续下一个任务，同时持久化阶段并发送成功和失败通知', async () => {
     const root = await mkdtemp(join(tmpdir(), 'analysis-task-execution-'));
     directories.push(root);
@@ -20,9 +64,10 @@ describe('分析任务单线程执行', () => {
     repository.upsertPackage(packageRecord('package-fails', await createArchive(root, 'package-fails')));
     repository.upsertPackage(packageRecord('package-succeeds', await createArchive(root, 'package-succeeds')));
     const workers: FakeAnalysisWorker[] = [];
+    const workerInputs: Array<Record<string, unknown>> = [];
     const notifications: unknown[] = [];
     const service = new AnalysisTaskService(repository, {
-      createWorker: () => { const worker = new FakeAnalysisWorker(); workers.push(worker); return worker; },
+      createWorker: (_url, options) => { const worker = new FakeAnalysisWorker(); workers.push(worker); workerInputs.push(options.workerData); return worker; },
       notify: (notification) => notifications.push(notification)
     });
 
@@ -42,6 +87,7 @@ describe('分析任务单线程执行', () => {
       await vi.waitFor(() => expect(repository.getPackage('package-succeeds')?.status).toBe('report-ready'));
 
       expect(workers).toHaveLength(2);
+      expect(workerInputs.every((input) => !Object.hasOwn(input, 'performanceProfiling'))).toBe(true);
       expect(notifications).toEqual([
         {
           title: '分析失败',

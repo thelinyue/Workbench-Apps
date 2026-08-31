@@ -1,9 +1,11 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { runV1ArchiveAnalysis } from './archive-analysis';
+import { PipelineProfiler } from '../analysis-v1/pipeline-profiler';
 
 interface AnalysisWorkerInput {
   sourcePath: string;
   extractDirectory: string;
+  performanceProfiling?: boolean;
 }
 
 /**
@@ -15,8 +17,9 @@ interface AnalysisWorkerInput {
 void (async () => {
   try {
     const input = workerData as AnalysisWorkerInput;
-    const result = await runV1ArchiveAnalysis({ ...input, onProgress: (progress) => parentPort?.postMessage({ type: 'progress', ...progress }) });
-    parentPort?.postMessage({ type: 'completed', succeeded: true, browserPath: result.browserPath, analysisResult: result.result });
+    const profiler = input.performanceProfiling ? new PipelineProfiler() : undefined;
+    const result = await runV1ArchiveAnalysis({ sourcePath: input.sourcePath, extractDirectory: input.extractDirectory, profiler, onProgress: (progress) => parentPort?.postMessage({ type: 'progress', ...progress }) });
+    parentPort?.postMessage({ type: 'completed', succeeded: true, browserPath: result.browserPath, analysisResult: result.result, ...(result.performanceProfile ? { performanceProfile: result.performanceProfile } : {}) });
   } catch (error) {
     parentPort?.postMessage({ type: 'completed', succeeded: false, errorMessage: error instanceof Error ? error.message : String(error) });
   }

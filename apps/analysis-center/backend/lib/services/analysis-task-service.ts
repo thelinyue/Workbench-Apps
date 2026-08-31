@@ -1,22 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import type { AnalyzerRuleCatalog } from '../analysis/log-analyzer';
 import { assertDiagnosticArchiveIntegrity } from '../analysis/archive-integrity';
 import { getDiagnosticPackageFormat } from '../domain/diagnostic-package';
 import type { AnalysisTaskRecord, AnalysisTaskStage, WorkspaceRepository } from '../data/workspace-repository';
 import type { AnalysisResult } from '../analysis-v1/pipeline';
+import type { PipelineProfile } from '../analysis-v1/pipeline-profiler';
 
 export interface AnalysisWorker {
   terminate(): Promise<number>;
-  on(event: 'message', listener: (result: { type?: 'progress' | 'completed'; progress?: number; stage?: AnalysisTaskStage; message?: string; succeeded?: boolean; browserPath?: string; analysisResult?: AnalysisResult; errorMessage?: string }) => void): this;
+  on(event: 'message', listener: (result: { type?: 'progress' | 'completed'; progress?: number; stage?: AnalysisTaskStage; message?: string; succeeded?: boolean; browserPath?: string; analysisResult?: AnalysisResult; performanceProfile?: PipelineProfile; errorMessage?: string }) => void): this;
   once(event: 'error', listener: (error: Error) => void): this;
   once(event: 'exit', listener: (code: number) => void): this;
 }
 
 export interface AnalysisTaskServiceOptions {
-  createWorker?: (url: URL, options: { workerData: { sourcePath: string; extractDirectory: string } }) => AnalysisWorker;
+  createWorker?: (url: URL, options: { workerData: { sourcePath: string; extractDirectory: string; performanceProfiling?: boolean } }) => AnalysisWorker;
   notify?: (notification: { title: string; body: string; windowKey: 'main'; activationPayload: { kind: 'result' | 'failure'; packageId: string } }) => void;
+  performanceProfiling?: { onCompleted: (profile: PipelineProfile) => void };
 }
 
 /** 任务按创建先后执行，保证界面显示的“前方任务数”与实际调度顺序一致。 */
@@ -157,13 +160,26 @@ export class AnalysisTaskService extends EventEmitter {
         this.emit('changed');
       });
       if (this.cancelledTaskIds.has(task.id)) return;
-      diagnosticPackage.status = 'report-ready';
-      diagnosticPackage.reportPath = output.browserPath;
-      this.repository.upsertPackage(diagnosticPackage);
-      this.repository.upsertTask({ ...runningTask, status: 'succeeded', progress: 100, stage: 'form-conclusion', message: '诊断结果已完成' });
-      this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'succeeded', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
-      this.repository.saveAnalysisResult(task.packageId, task.id, output.result);
-      this.repository.upsertReport(task.packageId, output.browserPath);
+      if (this.options.performanceProfiling && !output.performanceProfile) throw new Error('分析 Worker 未返回已启用的性能采集结果');
+      const persistSuccess = () => {
+        diagnosticPackage.status = 'report-ready';
+        diagnosticPackage.reportPath = output.browserPath;
+        this.repository.upsertPackage(diagnosticPackage);
+        this.repository.upsertTask({ ...runningTask, status: 'succeeded', progress: 100, stage: 'form-conclusion', message: '诊断结果已完成' });
+        this.repository.upsertAnalysisRecord({ id: task.id, packageId: task.packageId, taskId: task.id, status: 'succeeded', createdAt: task.createdAt, updatedAt: new Date().toISOString() });
+        this.repository.saveAnalysisResult(task.packageId, task.id, output.result);
+        this.repository.upsertReport(task.packageId, output.browserPath);
+      };
+      if (output.performanceProfile) {
+        const startedAt = performance.now();
+        try { persistSuccess(); }
+        finally {
+          const metric = output.performanceProfile.stages.persistence;
+          metric.durationMs += Math.max(0, performance.now() - startedAt);
+          metric.invocations += 1;
+        }
+        this.reportPerformanceProfile(output.performanceProfile);
+      } else persistSuccess();
       this.notify({
         title: '分析完成',
         body: `${diagnosticPackage.displayName}：${output.result.diagnoses[0]?.title ?? (output.result.status === 'partial' ? '分析部分完成' : '未发现明确异常')}`,
@@ -197,18 +213,19 @@ export class AnalysisTaskService extends EventEmitter {
     }
   }
 
-  private runWorker(sourcePath: string, extractDirectory: string, onProgress: (progress: number, stage: AnalysisTaskStage, message: string) => void): Promise<{ browserPath: string; result: AnalysisResult }> {
+  private runWorker(sourcePath: string, extractDirectory: string, onProgress: (progress: number, stage: AnalysisTaskStage, message: string) => void): Promise<{ browserPath: string; result: AnalysisResult; performanceProfile?: PipelineProfile }> {
     return new Promise((resolve, reject) => {
       // 分析中心 backend 以 ESM 发布，必须从实际 entry URL 定位同级 Worker，不能依赖 CommonJS 的 __dirname。
-      const worker = (this.options.createWorker ?? createDefaultAnalysisWorker)(new URL('./analysis-worker.js', import.meta.url), { workerData: { sourcePath, extractDirectory } });
+      const workerData = { sourcePath, extractDirectory, ...(this.options.performanceProfiling ? { performanceProfiling: true } : {}) };
+      const worker = (this.options.createWorker ?? createDefaultAnalysisWorker)(new URL('./analysis-worker.js', import.meta.url), { workerData });
       this.activeWorker = worker;
       let settled = false;
       const fail = (error: Error) => { if (!settled) { settled = true; reject(error); } };
-      const succeed = (browserPath: string, result: AnalysisResult) => { if (!settled) { settled = true; resolve({ browserPath, result }); } };
+      const succeed = (browserPath: string, result: AnalysisResult, performanceProfile?: PipelineProfile) => { if (!settled) { settled = true; resolve({ browserPath, result, performanceProfile }); } };
       this.activeCancellation = () => fail(new Error('任务已取消'));
-      worker.on('message', (result: { type?: 'progress' | 'completed'; progress?: number; stage?: AnalysisTaskStage; message?: string; succeeded?: boolean; browserPath?: string; analysisResult?: AnalysisResult; errorMessage?: string }) => {
+      worker.on('message', (result: { type?: 'progress' | 'completed'; progress?: number; stage?: AnalysisTaskStage; message?: string; succeeded?: boolean; browserPath?: string; analysisResult?: AnalysisResult; performanceProfile?: PipelineProfile; errorMessage?: string }) => {
         if (result.type === 'progress' && typeof result.progress === 'number' && result.stage && result.message) { onProgress(result.progress, result.stage, result.message); return; }
-        if (result.type === 'completed' || result.succeeded !== undefined) result.succeeded && result.browserPath && result.analysisResult ? succeed(result.browserPath, result.analysisResult) : fail(new Error(result.errorMessage ?? '分析引擎没有返回诊断结果'));
+        if (result.type === 'completed' || result.succeeded !== undefined) result.succeeded && result.browserPath && result.analysisResult ? succeed(result.browserPath, result.analysisResult, result.performanceProfile) : fail(new Error(result.errorMessage ?? '分析引擎没有返回诊断结果'));
       });
       worker.once('error', (error) => fail(new Error(`分析引擎工作线程异常：${error.message}`)));
       worker.once('exit', (code) => { if (code !== 0) fail(new Error(`分析引擎工作线程异常退出，退出码：${code}`)); });
@@ -218,6 +235,12 @@ export class AnalysisTaskService extends EventEmitter {
   private notify(notification: Parameters<NonNullable<AnalysisTaskServiceOptions['notify']>>[0]): void {
     try { this.options.notify?.(notification); }
     catch (error) { console.error(`发送分析任务系统通知失败：${errorMessage(error)}`); }
+  }
+
+  /** 开发性能回调不属于业务持久化；回调失败不能把已经成功的诊断任务改成失败。 */
+  private reportPerformanceProfile(profile: PipelineProfile): void {
+    try { this.options.performanceProfiling?.onCompleted(profile); }
+    catch (error) { console.error(`交付分析 Pipeline 性能数据失败：${errorMessage(error)}`); }
   }
 
   private requestActiveWorkerTermination(): Promise<number> | undefined {
@@ -268,7 +291,7 @@ export class AnalysisTaskService extends EventEmitter {
   }
 }
 
-function createDefaultAnalysisWorker(url: URL, options: { workerData: { sourcePath: string; extractDirectory: string } }): AnalysisWorker {
+function createDefaultAnalysisWorker(url: URL, options: { workerData: { sourcePath: string; extractDirectory: string; performanceProfiling?: boolean } }): AnalysisWorker {
   return new Worker(url, options);
 }
 
