@@ -83,7 +83,7 @@ async function main() {
     for await (const event of watcher) {
       const file = typeof event.filename === 'string' ? event.filename : '';
       const changedPath = relative(paths.appDirectory, resolve(paths.appDirectory, file)).replaceAll('\\', '/');
-      if (!changedPath || changedPath === 'dist' || changedPath.startsWith('dist/')) continue;
+      if (!shouldRebuildForPath(changedPath)) continue;
       scheduleBuild();
     }
   } catch (error) {
@@ -114,6 +114,18 @@ export function getNpmRunCommand(script, platform = process.platform) {
   return platform === 'win32'
     ? { command: 'cmd.exe', args: ['/d', '/s', '/c', `npm.cmd run ${script}`] }
     : { command: 'npm', args: ['run', script] };
+}
+
+/**
+ * 联调只应响应源代码和配置变化，忽略构建产物与工具缓存，避免一次构建再次触发自身。
+ */
+export function shouldRebuildForPath(changedPath) {
+  const normalizedPath = changedPath.replaceAll('\\', '/');
+  return Boolean(normalizedPath)
+    && normalizedPath !== 'dist'
+    && !normalizedPath.startsWith('dist/')
+    && normalizedPath !== 'node_modules'
+    && !normalizedPath.startsWith('node_modules/');
 }
 
 function terminate(child) {

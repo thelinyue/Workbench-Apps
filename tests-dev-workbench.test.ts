@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { getNpmRunCommand, getWorkbenchDevCommand, validateDevWorkbenchPaths } from './tools/dev-workbench.mjs';
+import { getNpmRunCommand, getWorkbenchDevCommand, shouldRebuildForPath, validateDevWorkbenchPaths } from './tools/dev-workbench.mjs';
 
 describe('本地工作台联调启动器', () => {
   it('只接受已支持应用，并返回应用 dist 与同级 Workbench 路径', async () => {
@@ -31,5 +31,12 @@ describe('本地工作台联调启动器', () => {
     expect(getWorkbenchDevCommand('win32')).toEqual({ command: 'cmd.exe', args: ['/d', '/s', '/c', 'npm.cmd run dev'] });
     expect(getWorkbenchDevCommand('linux')).toEqual({ command: 'npm', args: ['run', 'dev'] });
     expect(getNpmRunCommand('build:analysis-center', 'win32')).toEqual({ command: 'cmd.exe', args: ['/d', '/s', '/c', 'npm.cmd run build:analysis-center'] });
+  });
+
+  it('忽略 dist 和 node_modules 生成文件，避免缓存变更触发联调重建', () => {
+    expect(shouldRebuildForPath('renderer/view.tsx')).toBe(true);
+    expect(shouldRebuildForPath('dist')).toBe(false);
+    expect(shouldRebuildForPath('dist/assets/index.js')).toBe(false);
+    expect(shouldRebuildForPath('node_modules/.vite/vitest/results.json')).toBe(false);
   });
 });
