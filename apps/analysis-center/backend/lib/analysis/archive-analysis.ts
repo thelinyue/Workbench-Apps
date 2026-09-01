@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs';
-import { lstat, mkdir, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { basename, join, relative } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
@@ -19,7 +19,8 @@ import bootstrapCss from './static/bootstrap.min.css?raw';
 import bootstrapScript from './static/bootstrap.bundle.min.js?raw';
 import { analyzeStructuredExtract, type StructuredAnalysis } from './structured-analysis';
 import { buildV1ResultFromFormatRules } from '../analysis-v1/format-rule-adapter';
-import type { AnalysisResult as V1AnalysisResult } from '../analysis-v1/pipeline';
+import { analyzeV1Sources, type AnalysisResult as V1AnalysisResult } from '../analysis-v1/pipeline';
+import { classifyV1Source } from '../analysis-v1/source-classifier';
 import { type PipelineProfile, PipelineProfiler } from '../analysis-v1/pipeline-profiler';
 import { builtInAnalyzerRules } from './built-in-rules';
 import type { AnalysisTaskStage } from '../data/workspace-repository';
@@ -122,10 +123,32 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
     });
     if (scan.matchedFiles === 0) throw new Error('无法识别日志包：未找到受支持的系统或存储日志');
     request.onProgress?.({ progress: 55, stage: 'analyze-storage', message: '正在分析存储状态' });
-    const result = measureRuntime(runtimeTimings, 'pipelineAnalysisMs', () => profiler
-      ? profiler.measure('diagnosis.compose', () => buildV1ResultFromFormatRules({ sourceName: basename(request.sourcePath), format: archiveFormat, ruleVersion: builtInAnalyzerRules[archiveFormat].version, scan }))
-      : buildV1ResultFromFormatRules({ sourceName: basename(request.sourcePath), format: archiveFormat, ruleVersion: builtInAnalyzerRules[archiveFormat].version, scan }));
-    recordFormatScanProfile(profiler, archiveFormat, scan, result);
+    const structuredSources = archiveFormat === 'tgz'
+      ? await measureRuntimeAsync(runtimeTimings, 'sourceInventoryMs', () => collectV1Sources(request.extractDirectory))
+      : undefined;
+    const composed = measureRuntime(runtimeTimings, 'pipelineAnalysisMs', () => {
+      const compose = () => {
+        const formatResult = buildV1ResultFromFormatRules({ sourceName: basename(request.sourcePath), format: archiveFormat, ruleVersion: builtInAnalyzerRules[archiveFormat].version, scan });
+        if (archiveFormat === 'zip') return { result: formatResult, formatResult };
+
+        // TGZ 同时保留格式规则和结构化诊断：前者只提供补充证据，后者决定主诊断与设备结论。
+        const structuredResult = analyzeV1Sources({
+          sourceName: basename(request.sourcePath),
+          files: structuredSources ?? {},
+          profiler,
+          onProgress: ({ processedFiles, totalFiles }) => request.onProgress?.({
+            progress: 55 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 30),
+            stage: 'analyze-storage',
+            message: `正在分析存储状态（${processedFiles}/${totalFiles}）`
+          })
+        });
+        return { result: mergeTgzResults(structuredResult, formatResult), formatResult };
+      };
+      // 结构化分析自身会记录 diagnosis.compose；ZIP 保持原有的格式规则计时阶段。
+      return profiler && archiveFormat === 'zip' ? profiler.measure('diagnosis.compose', compose) : compose();
+    });
+    recordFormatScanProfile(profiler, archiveFormat, scan, composed.formatResult, archiveFormat === 'zip');
+    const result = composed.result;
     request.onProgress?.({ progress: 85, stage: 'aggregate-anomalies', message: '正在聚合异常并关联诊断结论' });
     const browserPath = join(request.extractDirectory, 'analysis-result.html');
     // 归档识别结果是报告模板选择的唯一来源，禁止从文件名、规则版本或 Finding ID 反推格式。
@@ -161,7 +184,7 @@ function elapsedSince(startedAt: number): number {
 }
 
 /** 让开发性能快照保留格式扫描的真实文件和规则指标，但不伪造公共 V1 Parser 阶段。 */
-function recordFormatScanProfile(profiler: PipelineProfiler | undefined, format: 'tgz' | 'zip', scan: Awaited<ReturnType<typeof analyzeExtractedDirectoryWithStats>>, result: V1AnalysisResult): void {
+function recordFormatScanProfile(profiler: PipelineProfiler | undefined, format: 'tgz' | 'zip', scan: Awaited<ReturnType<typeof analyzeExtractedDirectoryWithStats>>, result: V1AnalysisResult, includeDiagnosisMetrics = true): void {
   if (!profiler) return;
   const processedEvents = scan.analysis.files.reduce((count, file) => count + file.issues.length, 0);
   profiler.increment('fileInventoryPasses');
@@ -175,15 +198,85 @@ function recordFormatScanProfile(profiler: PipelineProfiler | undefined, format:
   profiler.increment('eventsCreated', processedEvents);
   profiler.increment('findingsCreated', result.findings.length);
   profiler.increment('evidenceRetained', result.evidence.length);
-  profiler.increment('diagnosesCreated', result.diagnoses.length);
-  profiler.increment('recommendationsCreated', result.recommendations.length);
+  if (includeDiagnosisMetrics) {
+    profiler.increment('diagnosesCreated', result.diagnoses.length);
+    profiler.increment('recommendationsCreated', result.recommendations.length);
+  }
   profiler.increment('findingEvidenceReferences', result.findings.reduce((count, finding) => count + finding.evidenceIds.length, 0));
   profiler.increment('uniqueFindingEvidenceReferences', new Set(result.findings.flatMap((finding) => finding.evidenceIds)).size);
   for (const file of scan.fileStats ?? []) {
-    profiler.recordFile(file.file, 'format-rule', { bytesRead: file.bytesRead, decodedBytes: file.decodedBytes });
+    if (!profiler.hasFile(file.file)) profiler.recordFile(file.file, 'format-rule', { bytesRead: file.bytesRead, decodedBytes: file.decodedBytes });
     profiler.addFileMetrics(file.file, { linesProcessed: file.linesProcessed, eventsCreated: file.issueCount, evidenceRetained: file.issueCount });
     profiler.recordRule(`format-rule.${format}.${file.ruleName}`, file.issueCount, file.issueCount > 0, 0);
   }
+}
+
+/**
+ * TGZ 解压目录中只读取结构化引擎认可的来源，避免将格式规则专用日志或报告产物当作诊断输入。
+ * 返回相对路径是为了保留原始日志来源，确保诊断证据可以回溯到归档内的文件。
+ */
+async function collectV1Sources(extractDirectory: string): Promise<Record<string, string>> {
+  try {
+    const files = await listExtractedFiles(extractDirectory);
+    const sources = await Promise.all(files
+      .map((filePath) => relative(extractDirectory, filePath).replaceAll('\\', '/'))
+      .filter((sourceFile) => classifyV1Source(sourceFile))
+      .map(async (sourceFile) => {
+        try {
+          return [sourceFile, await readFile(join(extractDirectory, sourceFile), 'utf8')] as const;
+        } catch (error) {
+          throw new Error(`读取结构化日志失败：${sourceFile}；原因：${error instanceof Error ? error.message : String(error)}`);
+        }
+      }));
+    return Object.fromEntries(sources);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('读取结构化日志失败：')) throw error;
+    throw new Error(`收集结构化日志失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function listExtractedFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const filePath = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await listExtractedFiles(filePath));
+    else if (entry.isFile()) files.push(filePath);
+  }
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
+/**
+ * 合并 TGZ 的两种分析结果。结构化结果的 Diagnosis、设备身份和建议保持原样；格式规则的
+ * Finding/Evidence 追加到结果尾部，并为新 Evidence 分配稳定且不冲突的 ID。
+ */
+function mergeTgzResults(structured: V1AnalysisResult, formatRules: V1AnalysisResult): V1AnalysisResult {
+  const usedEvidenceIds = new Set(structured.evidence.map((item) => item.id));
+  const evidenceIdMap = new Map<string, string>();
+  let nextEvidenceNumber = structured.evidence.length + 1;
+  const formatEvidence = formatRules.evidence.map((item) => {
+    let id = `evidence-${nextEvidenceNumber++}`;
+    while (usedEvidenceIds.has(id)) id = `evidence-${nextEvidenceNumber++}`;
+    usedEvidenceIds.add(id);
+    evidenceIdMap.set(item.id, id);
+    return { ...item, id };
+  });
+  const formatFindings = formatRules.findings.map((finding) => ({
+    ...finding,
+    evidenceIds: finding.evidenceIds.map((id) => evidenceIdMap.get(id)!).filter((id): id is string => Boolean(id))
+  }));
+  return {
+    ...structured,
+    findings: [...structured.findings, ...formatFindings],
+    evidence: [...structured.evidence, ...formatEvidence],
+    metadata: {
+      ...structured.metadata,
+      processedFiles: formatRules.metadata.processedFiles,
+      processedLines: formatRules.metadata.processedLines,
+      processedEvents: structured.metadata.processedEvents + formatRules.metadata.processedEvents,
+      rulePackVersion: formatRules.metadata.rulePackVersion
+    }
+  };
 }
 
 /**

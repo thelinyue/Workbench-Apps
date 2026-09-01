@@ -25,10 +25,31 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
   const progress: Array<{ progress: number; stage: string; message: string }> = [];
   const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted'), onProgress: (update) => progress.push(update) });
 
-  expect(result.result.diagnoses[0]).toMatchObject({ id: 'format-rule.tgz.summary', title: 'TGZ 规则发现异常' });
+  expect(result.result.diagnoses[0]).toEqual(expect.objectContaining({
+    id: 'storage.device.suspected_failure',
+    title: '/dev/sdc 高度疑似存在磁盘故障',
+    primaryResource: '/dev/sdc',
+    userConclusion: expect.stringContaining('硬盘 3'),
+    engineerConclusion: expect.stringContaining('硬盘 3：')
+  }));
+  expect(result.result.diagnoses).not.toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'format-rule.tgz.summary' })
+  ]));
+  expect(result.result.deviceAssessments).toEqual(expect.arrayContaining([
+    expect.objectContaining({ resource: '/dev/sdc', label: 'Hard Drive 3', serial: 'SERIAL-003', usedFor: 'Storage Pool 3' })
+  ]));
+  expect(result.result.findings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ category: 'format-rule', type: expect.stringMatching(/^format-rule\.tgz\./) })
+  ]));
+  const evidenceIds = result.result.evidence.map((item) => item.id);
+  expect(new Set(evidenceIds).size).toBe(evidenceIds.length);
+  expect(result.result.evidence).toEqual(expect.arrayContaining([
+    expect.objectContaining({ eventType: expect.stringMatching(/^format-rule\.tgz\./), rawMessage: 'UPS ups0@localhost on battery' })
+  ]));
   expect(result.browserPath).toContain('analysis-result.html');
   const html = await readFile(result.browserPath, 'utf8');
-  expect(html).toContain('TGZ 专用规则检测到');
+  expect(html).not.toContain('TGZ 专用规则检测到');
+  expect(html).toContain('硬盘 3（序列号：SERIAL-003）：检测到多次读写错误（I/O Error）；硬盘健康信息存在异常。');
   expect(html).toContain('规则包：tgz@2026.08.26');
   expect(html).toContain('UPS 已切换至电池供电，说明外部输入曾出现异常');
   expect(html).toContain('data-report-format="tgz"');
@@ -61,6 +82,54 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
   expect(Object.values(result.runtimeTimings).every((duration) => duration >= 0)).toBe(true);
   expect(result.runtimeTimings.archiveValidationMs).toBeGreaterThan(0);
   expect(result.runtimeTimings.totalMs).toBeGreaterThanOrEqual(result.runtimeTimings.archiveValidationMs);
+});
+
+it('TGZ 没有明确硬盘故障时不把规则命中作为主诊断，但保留规则证据', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-tgz-rules-only-'));
+  directories.push(root);
+  await writeFile(join(root, 'syslog'), '2026-08-26T03:12:01+08:00 UPS ups0@localhost on battery');
+  const archivePath = join(root, 'rules-only.tgz');
+  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['syslog']);
+
+  const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+
+  expect(result.result.diagnoses).toEqual([]);
+  expect(result.result.findings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ category: 'format-rule', type: 'format-rule.tgz.syslog' })
+  ]));
+  expect(result.result.evidence).toEqual(expect.arrayContaining([
+    expect.objectContaining({ eventType: 'format-rule.tgz.syslog', rawMessage: '2026-08-26T03:12:01+08:00 UPS ups0@localhost on battery' })
+  ]));
+});
+
+it('TGZ 介质故障归档使用结构化硬盘结论并保留硬盘双结论', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-tgz-media-failure-'));
+  directories.push(root);
+  await writeFile(join(root, 'kern.log'), [
+    'ata1.00: error: { UNC }',
+    'sd 0:0:0:0: [sdb] Sense Key : Medium Error [current]',
+    'sd 0:0:0:0: [sdb] Add. Sense: Unrecovered read error - auto reallocate failed'
+  ].join('\n'));
+  await writeFile(join(root, 'mdstat.log'), '');
+  await writeFile(join(root, 'sysinfo.json'), JSON.stringify({ disk: { devices: [{
+    disk_info: { dev_name: '/dev/sdb', label: 'Hard Drive 1', serial: 'SERIAL-001' },
+    smart_info: { report: [] }
+  }] } }));
+  const archivePath = join(root, 'media-failure.tgz');
+  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['kern.log', 'mdstat.log', 'sysinfo.json']);
+
+  const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+  const diagnosis = result.result.diagnoses[0];
+
+  expect(diagnosis).toEqual(expect.objectContaining({
+    id: 'storage.device.media_failure',
+    title: '硬盘 1 存在介质故障',
+    userConclusion: expect.stringContaining('建议更换硬盘 1'),
+    engineerConclusion: expect.stringContaining('硬盘 1：')
+  }));
+  expect(result.result.deviceAssessments).toEqual(expect.arrayContaining([
+    expect.objectContaining({ resource: '/dev/sdb', label: 'Hard Drive 1', serial: 'SERIAL-001', mediaErrorCount: 1 })
+  ]));
 });
 
 it('V1 分析保留 gzip 轮转日志但不读取其内容，并保留既有非 gzip 文件', async () => {
@@ -114,6 +183,8 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
   expect(output.result.metadata.processedFiles).toBe(4);
   expect(output.result.metadata.analyzerVersion).toBe('1.2.0');
   expect(output.result.metadata.rulePackVersion).toBe('zip@2026.08.26');
+  expect(output.result.deviceAssessments).toEqual([]);
+  expect(output.result.diagnoses[0]).toMatchObject({ id: 'format-rule.zip.summary', title: 'ZIP 规则发现异常' });
   expect(output.result.findings).toEqual(expect.arrayContaining([
     expect.objectContaining({ type: 'format-rule.zip.zip_syslog', title: 'UPS 已切换至电池供电', matchedKeyword: 'UPS ups0@localhost on battery' }),
     expect.objectContaining({ type: 'format-rule.zip.zip_dmsg', title: 'NVMe 设备未就绪，重置已中止', matchedKeyword: 'nvme.*Device not ready; aborting reset' }),
