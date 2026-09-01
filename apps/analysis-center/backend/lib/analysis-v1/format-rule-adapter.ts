@@ -38,6 +38,7 @@ export function buildV1ResultFromFormatRules(input: FormatRuleAdapterInput): Ana
         sourceFile: file.file,
         lineNumber: issue.line,
         eventType,
+        ...resourceFromLogLine(rawMessage),
         rawMessage: rawMessage.slice(0, 4000),
         ...(contextBefore.length ? { contextBefore } : {}),
         ...(contextAfter.length ? { contextAfter } : {})
@@ -63,6 +64,7 @@ export function buildV1ResultFromFormatRules(input: FormatRuleAdapterInput): Ana
           confidence: 'high',
           title: issue.message,
           summary: `${file.category}规则命中“${issue.message}”。`,
+          matchedKeyword: issue.keyword,
           affectedResources: [],
           evidenceIds: [evidenceId],
           occurrenceCount: 1
@@ -105,6 +107,13 @@ export function buildV1ResultFromFormatRules(input: FormatRuleAdapterInput): Ana
       missingData: []
     }
   };
+}
+
+/** 只提取日志中明确出现的资源标识，不根据规则名称或上下文推断设备拓扑。 */
+function resourceFromLogLine(line: string): Pick<Evidence, 'resource'> {
+  const resources = line.match(/\b(?:ups\d+@[\w.-]+|nvme\d+n\d+(?:p\d+)?|nvme\d+|sd[a-z]\d*)\b/gi);
+  if (!resources?.length) return {};
+  return { resource: resources.reduce((longest, resource) => resource.length > longest.length ? resource : longest) };
 }
 
 function buildSummaryDiagnosis(format: DiagnosticPackageFormat, findings: Finding[], processedEvents: number): Diagnosis {

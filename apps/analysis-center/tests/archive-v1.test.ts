@@ -31,6 +31,12 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
   expect(html).toContain('TGZ 专用规则检测到');
   expect(html).toContain('规则包：tgz@2026.08.26');
   expect(html).toContain('UPS 已切换至电池供电，说明外部输入曾出现异常');
+  expect(html).toContain('data-report-format="tgz"');
+  expect(html).toContain('TGZ 系统诊断报告');
+  expect(html).toContain('关键字命中日志');
+  expect(html).toContain('UPS ups0@localhost on battery');
+  expect(html).toContain('异常硬盘');
+  expect(html).toContain('建议处理');
   expect(html).toContain('white-space:pre-line');
   expect(progress.map((item) => item.message)).toEqual(expect.arrayContaining([
     '正在读取日志（4/4）'
@@ -99,29 +105,36 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
   await createZip(archivePath, [
     { name: 'DEVICE_20260830192714_syslog', content: '2026-08-30T19:27:14+08:00 UPS ups0@localhost on battery' },
     { name: 'DEVICE_20260830193155_dmsg.log.gz', content: gzipSync('2026-08-30T19:31:55+08:00 nvme nvme0: Device not ready; aborting reset') },
+    { name: 'nas_storage.log.2', content: '2026-08-30T19:31:58+08:00 append hotplug event : remove nvme0n1p1' },
     { name: 'ai_engine_crash.xlog.gz', content: gzipSync('2026-08-30T19:32:00+08:00 kernel: Buffer I/O error on dev sdz') }
   ]);
 
   const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted'), profiler: new PipelineProfiler() });
 
-  expect(output.result.metadata.processedFiles).toBe(3);
+  expect(output.result.metadata.processedFiles).toBe(4);
   expect(output.result.metadata.analyzerVersion).toBe('1.2.0');
   expect(output.result.metadata.rulePackVersion).toBe('zip@2026.08.26');
   expect(output.result.findings).toEqual(expect.arrayContaining([
-    expect.objectContaining({ type: 'format-rule.zip.zip_syslog', title: 'UPS 已切换至电池供电' }),
-    expect.objectContaining({ type: 'format-rule.zip.zip_dmsg', title: 'NVMe 设备未就绪，重置已中止' })
+    expect.objectContaining({ type: 'format-rule.zip.zip_syslog', title: 'UPS 已切换至电池供电', matchedKeyword: 'UPS ups0@localhost on battery' }),
+    expect.objectContaining({ type: 'format-rule.zip.zip_dmsg', title: 'NVMe 设备未就绪，重置已中止', matchedKeyword: 'nvme.*Device not ready; aborting reset' }),
+    expect.objectContaining({ type: 'format-rule.zip.zip_storage', title: '存储服务记录到 NVMe 移除事件', matchedKeyword: 'append hotplug event\\s*:\\s*remove\\s+nvme\\d+(?:n\\d+(?:p\\d+)?)?' })
+  ]));
+  expect(output.result.evidence).toEqual(expect.arrayContaining([
+    expect.objectContaining({ sourceFile: 'DEVICE_20260830192714_syslog', resource: 'ups0@localhost' }),
+    expect.objectContaining({ sourceFile: 'DEVICE_20260830193155_dmsg.log.gz', resource: 'nvme0' }),
+    expect.objectContaining({ sourceFile: 'nas_storage.log.2', resource: 'nvme0n1p1' })
   ]));
   expect(output.performanceProfile?.counters).toMatchObject({
     fileInventoryPasses: 1,
-    filesDiscovered: 3,
+    filesDiscovered: 4,
     filesIgnored: 1,
-    filesRead: 2,
-    linesProcessed: 2,
-    eventsCreated: 2,
-    findingsCreated: 2,
-    evidenceRetained: 2
+    filesRead: 3,
+    linesProcessed: 3,
+    eventsCreated: 3,
+    findingsCreated: 3,
+    evidenceRetained: 3
   });
-  expect(output.performanceProfile?.files.map((file) => file.alias)).toEqual(['format-rule-01', 'format-rule-02']);
+  expect(output.performanceProfile?.files.map((file) => file.alias)).toEqual(['format-rule-01', 'format-rule-02', 'format-rule-03']);
   expect(JSON.stringify(output.performanceProfile)).not.toContain('DEVICE');
   expect(output.performanceProfile?.stages['archive.extract'].invocations).toBe(1);
   expect(output.performanceProfile?.stages['source.read'].invocations).toBe(1);
@@ -131,6 +144,39 @@ it('V1 分析识别真实 ZIP 的设备前缀日志，并忽略未知 xlog', asy
   const ordinaryOutput = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'ordinary-extracted') });
   expect(ordinaryOutput.performanceProfile).toBeUndefined();
   expect(normalizeRuntimeFields(ordinaryOutput.result)).toEqual(normalizeRuntimeFields(output.result));
+
+  const html = await readFile(output.browserPath, 'utf8');
+  expect(html).toContain('data-report-format="zip"');
+  expect(html).toContain('ZIP 诊断日志分析报告');
+  expect(html).toContain('关键字命中日志');
+  expect(html).toContain('DEVICE_20260830192714_syslog');
+  expect(html).toContain('DEVICE_20260830193155_dmsg.log.gz');
+  expect(html).toContain('nas_storage.log.2');
+  expect(html).not.toContain('异常硬盘');
+  expect(html).not.toContain('建议处理');
+});
+
+it('ZIP 报告保留全部证据但初始不创建日志节点，并安全序列化日志内容', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-zip-report-'));
+  directories.push(root);
+  const archivePath = join(root, 'nas_server_log_many_hits.zip');
+  const lines = Array.from({ length: 105 }, (_, index) => {
+    const suffix = index === 104 ? ' </script><script>window.__injected=1</script>' : '';
+    return `2026-08-30T19:27:${String(index % 60).padStart(2, '0')}+08:00 UPS ups0@localhost on battery marker-${index}${suffix}`;
+  });
+  await createZip(archivePath, [{ name: 'DEVICE_many_syslog', content: lines.join('\n') }]);
+
+  const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+  const html = await readFile(output.browserPath, 'utf8');
+
+  expect(output.result.evidence).toHaveLength(105);
+  expect(html).toContain('marker-104');
+  expect(html).toContain('value="20"');
+  expect(html).toContain('value="50"');
+  expect(html).toContain('value="100"');
+  expect(html).not.toContain('<article class="evidence-entry"');
+  expect(html).not.toContain('</script><script>window.__injected=1</script>');
+  expect(html).toContain('\\u003c/script\\u003e\\u003cscript\\u003ewindow.__injected=1\\u003c/script\\u003e');
 });
 
 it('ZIP 仅包含 dmsg gzip 日志时使用 ZIP 规则并正常完成分析', async () => {
@@ -164,7 +210,11 @@ it('TGZ 使用 TGZ 规则，ZIP 专用文件名不会被 TGZ 规则接受', asyn
   const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'tgz-extracted') });
   expect(output.result.metadata.rulePackVersion).toBe('tgz@2026.08.26');
   expect(output.result.findings).toEqual(expect.arrayContaining([
-    expect.objectContaining({ type: 'format-rule.tgz.syslog', title: 'UPS 已切换至电池供电，说明外部输入曾出现异常' })
+    expect.objectContaining({
+      type: 'format-rule.tgz.syslog',
+      title: 'UPS 已切换至电池供电，说明外部输入曾出现异常',
+      matchedKeyword: 'UPS .*on battery'
+    })
   ]));
 
   const zipPath = join(root, 'nas_server_log_wrong-name.zip');

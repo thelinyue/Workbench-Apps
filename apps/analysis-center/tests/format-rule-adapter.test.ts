@@ -77,6 +77,7 @@ describe('格式规则 V1 结果适配器', () => {
       id: 'format-rule.zip.zip_syslog:UPS ups0@localhost on battery',
       type: 'format-rule.zip.zip_syslog',
       title: 'UPS 已切换至电池供电',
+      matchedKeyword: 'UPS ups0@localhost on battery',
       occurrenceCount: 2,
       evidenceIds: ['evidence-1', 'evidence-2']
     })]);
@@ -85,6 +86,7 @@ describe('格式规则 V1 结果适配器', () => {
       sourceFile: 'DEVICE_syslog',
       lineNumber: 2,
       eventType: 'format-rule.zip.zip_syslog',
+      resource: 'ups0@localhost',
       rawMessage: 'UPS ups0@localhost on battery',
       contextBefore: ['前一行'],
       contextAfter: ['后一行']
