@@ -9,7 +9,22 @@ export type TimestampPrecision = 'exact' | 'derived' | 'relative' | 'unknown';
 
 export interface Evidence { id: string; timestamp?: string; timestampPrecision: TimestampPrecision; timestampConfidence: Confidence; sourceFile: string; lineNumber?: number; eventType: string; resource?: string; rawMessage: string; contextBefore?: string[]; contextAfter?: string[]; }
 export interface NormalizedEvent { id: string; ruleId: string; type: string; resource?: string; timestamp?: string; timestampPrecision: TimestampPrecision; timestampConfidence: Confidence; evidenceId: string; attributes: Record<string, string | number>; }
-export interface Finding { id: string; type: string; category: string; severity: Severity; confidence: Confidence; title: string; summary: string; affectedResources: string[]; evidenceIds: string[]; firstSeen?: string; lastSeen?: string; occurrenceCount: number; }
+export interface Finding {
+  id: string;
+  type: string;
+  category: string;
+  severity: Severity;
+  confidence: Confidence;
+  title: string;
+  summary: string;
+  /** 格式规则实际使用的关键词或正则，报告必须直接读取该字段，不能从 Finding ID 反推。 */
+  matchedKeyword?: string;
+  affectedResources: string[];
+  evidenceIds: string[];
+  firstSeen?: string;
+  lastSeen?: string;
+  occurrenceCount: number;
+}
 export interface Recommendation { id: string; priority: number; type: 'inspection' | 'verification' | 'repair'; title: string; reason: string; risk: 'safe' | 'confirmation-required' | 'high-risk'; }
 export interface SmartRiskAttribute { id: number; name: string; raw: number; }
 export interface DeviceAssessment { resource: string; label?: string; model?: string; serial?: string; slot?: string; usedFor?: string; smartRiskAttributes: SmartRiskAttribute[]; ioErrorCount: number; mediaErrorCount?: number; }
