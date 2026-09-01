@@ -1,4 +1,4 @@
-import { ChevronLeft, CircleAlert, CircleCheck, Clock3, Copy, ExternalLink, FileJson2, FilePlus2, FolderOpen, LoaderCircle, MoreHorizontal, PanelRightOpen, Play, Save, ScanSearch, Settings, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
+import { ArrowUpDown, Check, ChevronDown, ChevronLeft, CircleAlert, CircleCheck, Clock3, Copy, ExternalLink, FileJson2, FilePlus2, FolderOpen, ListChecks, ListFilter, LoaderCircle, MoreHorizontal, PanelRightOpen, Play, Save, ScanSearch, Settings, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildResultPresentation } from '../shared/result-presentation';
 import { createEvidenceDrawerController, getEvidencePresentation, type EvidenceDrawerController, type EvidenceDrawerState } from './evidence-drawer';
@@ -6,10 +6,10 @@ import { AppHostClient } from './host-api';
 import { createLatestLoad } from './load-coordinator';
 import { createPackageImportWorkflow } from './package-file-import';
 import { createSettingsActions, type MonitorSettings } from './settings-actions';
-import { formatElapsed, getAnalysisRuntimePresentation, getLatestRuntimeTimingsByPackageId, getQueuePosition, isOutsideOverflowMenu, type AnalysisRuntimeTimingsView } from './task-presentation';
+import { formatElapsed, getAnalysisRuntimePresentation, getQueuePosition, isOutsideOverflowMenu, type AnalysisRuntimeTimingsView } from './task-presentation';
 import { startDialogLifecycle } from './dialog-lifecycle';
 import { openSysinfoReport } from './sysinfo-report-action';
-import { formatFileSize, getAnalysisStageItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, getWorkspaceGroups, shouldShowSysinfoReport, type AnalysisTaskStage } from './workspace-presentation';
+import { formatFileSize, getAnalysisStageItems, getAnalysisTaskFilterCounts, getAnalysisTaskItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, shouldShowSysinfoReport, type AnalysisTaskFilter, type AnalysisTaskSort, type AnalysisTaskStage } from './workspace-presentation';
 
 interface PackageItem { id: string; displayName: string; sourcePath: string; sourceSizeBytes?: number; detectedAt: string; lastAnalysisAt?: string; status: 'pending' | 'queued' | 'running' | 'report-ready' | 'failed' | 'cancelled'; reportPath?: string; }
 interface TaskItem { id: string; packageId: string; status: string; createdAt: string; startedAt?: string; progress: number; stage: AnalysisTaskStage; message: string; errorMessage?: string; runtimeTimings?: AnalysisRuntimeTimingsView; }
@@ -125,8 +125,6 @@ export function AnalysisCenterApp() {
     highlightedRef.current.focus({ preventScroll: true });
   }, [highlightedPackageId, packages]);
 
-  const failureByPackageId = useMemo(() => new Map(tasks.filter((task) => task.status === 'failed').map((task) => [task.packageId, task.errorMessage ?? task.message])), [tasks]);
-  const runtimeTimingsByPackageId = useMemo(() => getLatestRuntimeTimingsByPackageId(tasks), [tasks]);
   const resultByPackageId = useMemo(() => new Map(recentResults.map((item) => [item.packageId, item.result])), [recentResults]);
   const openSettings = (trigger?: HTMLButtonElement) => { if (trigger) settingsTriggerRef.current = trigger; setSettingsDraft(monitor); setSettingsError(''); setSettingsOpen(true); };
   const openEvidence = (trigger: HTMLButtonElement) => {
@@ -150,8 +148,6 @@ export function AnalysisCenterApp() {
   const resultPage = result && resultPackageId ? <main className="analysis-v1 result-view"><header className="result-toolbar"><button className="icon-button" title="返回分析工作区" aria-label="返回分析工作区" onClick={() => { setResult(undefined); setResultPackageId(undefined); }}><ChevronLeft size={18} /></button><strong title={result.metadata.source}>{result.metadata.source}</strong><div className="result-toolbar-actions"><button type="button" onClick={(event) => openEvidence(event.currentTarget)}><PanelRightOpen size={15} aria-hidden="true" />诊断证据</button>{shouldShowSysinfoReport(resultSourcePath) && <button type="button" className="sysinfo-report-button" disabled={sysinfoReportLoading} onClick={() => void openCompleteSysinfo()}>{sysinfoReportLoading ? <LoaderCircle className="is-spinning" size={15} aria-hidden="true" /> : <FileJson2 size={15} aria-hidden="true" />}{sysinfoReportLoading ? '生成中' : '查看完整 sysinfo'}</button>}<button onClick={() => void openBrowser()}><ExternalLink size={15} aria-hidden="true" />在浏览器打开</button><button className="icon-button" title="另存为 HTML" aria-label="另存为 HTML" onClick={() => void saveHtml()}><Save size={16} aria-hidden="true" /></button><button type="button" className="icon-button" title="打开分析中心设置" aria-label="打开分析中心设置" onClick={(event) => openSettings(event.currentTarget)}><Settings size={17} aria-hidden="true" /></button><ResultMoreMenu packageId={resultPackageId} /></div></header><div className="result-layout"><section className="result-main"><DiagnosisView result={result} onEvidence={(trigger) => openEvidence(trigger)} /></section>{evidenceDrawerState.presentation === 'panel' && <EvidencePanel panelRef={evidencePanelRef} packageId={resultPackageId} result={result} />}</div>{evidenceDrawerState.presentation === 'drawer' && evidenceDrawerState.open && <div className="evidence-drawer-backdrop" role="presentation" onMouseDown={evidenceDrawerController.close}><section ref={evidenceDrawerRef} className="evidence-drawer" role="dialog" aria-modal="true" aria-label="诊断证据抽屉" onMouseDown={(event) => event.stopPropagation()}><EvidencePanel closeControlRef={evidenceCloseRef} onClose={evidenceDrawerController.close} packageId={resultPackageId} result={result} /></section></div>}{settingsDialog}</main> : undefined;
   if (resultPage) return resultPage;
 
-  const { pending, recent } = getWorkspaceGroups(packages);
-  const running = tasks.filter((item) => item.status === 'running' || item.status === 'queued');
   const hasFiles = (event: React.DragEvent) => [...event.dataTransfer.types].includes('Files');
   const dragEnter = (event: React.DragEvent) => { if (!hasFiles(event)) return; event.preventDefault(); dragDepthRef.current += 1; setDragging(true); };
   const dragLeave = (event: React.DragEvent) => { if (!hasFiles(event)) return; event.preventDefault(); dragDepthRef.current = Math.max(0, dragDepthRef.current - 1); if (dragDepthRef.current === 0) setDragging(false); };
@@ -170,17 +166,20 @@ export function AnalysisCenterApp() {
     </section>
     {monitorStatus.warning && <div className="monitor-warning" role="alert">{monitorStatus.warning}</div>}
     {message && <div className="message" role="alert">{message}</div>}
-    <WorkspaceList title="待分析" items={pending} emptyText="当前没有待分析诊断包" onChanged={load} onError={showError} action={(item) => <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />开始分析</button>} />
-    <RunningTasks tasks={running} packages={packages} now={now} />
-    <WorkspaceList title="最近分析" items={recent} emptyText="暂无已完成或失败的分析" onChanged={load} onError={showError} failureByPackageId={failureByPackageId} resultByPackageId={resultByPackageId} runtimeTimingsByPackageId={runtimeTimingsByPackageId} onAnalyze={analyze} enableBatchDeletion highlightedPackageId={highlightedPackageId} highlightedRef={highlightedRef} action={(item) => item.status === 'report-ready' ? <button className="secondary-action" onClick={() => void openResult(item.id).catch(showError)}>查看结果</button> : <button className="secondary-action" onClick={() => void analyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>} />
+    <AnalysisTaskList packages={packages} tasks={tasks} now={now} resultByPackageId={resultByPackageId} highlightedPackageId={highlightedPackageId} highlightedRef={highlightedRef} onAnalyze={analyze} onOpenResult={openResult} onChanged={load} onError={showError} />
     <section className="workspace-dropzone"><FolderOpen size={18} aria-hidden="true" /><span>不在监控目录中？</span><button className="text-action" onClick={() => void importPackages()}>手动选择诊断包</button><small>导入后进入待分析</small></section>
     {dragging && <div className="drop-overlay" role="presentation"><div className="drop-target"><span className="drop-icon"><Upload size={34} aria-hidden="true" /></span><strong>松开以导入诊断包</strong><p>支持 .tgz · .tgz.temp · .zip</p><small>导入后将加入待分析</small></div></div>}
     {settingsDialog}
   </main>;
 }
 
-/** 诊断包列表复用同一行结构，避免各个状态分区的文件信息呈现出现偏差。 */
-function WorkspaceList({ title, items, emptyText, action, onChanged, onError, failureByPackageId, resultByPackageId, runtimeTimingsByPackageId, onAnalyze, enableBatchDeletion = false, highlightedPackageId, highlightedRef }: { title: string; items: PackageItem[]; emptyText: string; action: (item: PackageItem) => React.ReactNode; onChanged: () => Promise<void>; onError: (error: unknown) => void; failureByPackageId?: Map<string, string>; resultByPackageId?: Map<string, ResultSummary>; runtimeTimingsByPackageId?: Map<string, AnalysisRuntimeTimingsView>; onAnalyze?: (packageId: string) => Promise<void>; enableBatchDeletion?: boolean; highlightedPackageId?: string; highlightedRef?: React.MutableRefObject<HTMLElement | null> }) {
+/**
+ * 统一任务列表只合并工作区中的生命周期分区，结果标题、状态图标和运行阶段仍沿用原设计。
+ * 筛选、排序与批量选择都基于同一份快照，避免工具栏数量和实际行内容不一致。
+ */
+export function AnalysisTaskList({ packages, tasks, now, resultByPackageId, highlightedPackageId, highlightedRef, onAnalyze, onOpenResult, onChanged, onError }: { packages: PackageItem[]; tasks: TaskItem[]; now: number; resultByPackageId: Map<string, ResultSummary>; highlightedPackageId?: string; highlightedRef: React.MutableRefObject<HTMLElement | null>; onAnalyze: (packageId: string) => Promise<void>; onOpenResult: (packageId: string) => Promise<void>; onChanged: () => Promise<void>; onError: (error: unknown) => void }) {
+  const [filter, setFilter] = useState<AnalysisTaskFilter>('all');
+  const [sort, setSort] = useState<AnalysisTaskSort>('action-priority');
   const [openMenuPackageId, setOpenMenuPackageId] = useState<string>();
   const [deletingPackageId, setDeletingPackageId] = useState<string>();
   const [pendingDeletion, setPendingDeletion] = useState<PendingPackageDeletion>();
@@ -193,7 +192,12 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
   const batchDeleteTriggerRef = useRef<HTMLButtonElement>(null);
   const deletionSubmittingRef = useRef(false);
   deletionSubmittingRef.current = deletionSubmitting;
-  const selectablePackageIds = enableBatchDeletion ? getRecentAnalysisPackageIds(items) : [];
+  const taskItems = useMemo(() => getAnalysisTaskItems(packages, tasks, filter, sort), [filter, packages, sort, tasks]);
+  const items = taskItems.map((item) => item.package);
+  const taskByPackageId = new Map(taskItems.flatMap((item) => item.task ? [[item.package.id, item.task] as const] : []));
+  const counts = getAnalysisTaskFilterCounts(packages);
+  const selectablePackageIds = getRecentAnalysisPackageIds(items);
+  const batchAvailable = (filter === 'all' || filter === 'recent') && selectablePackageIds.length > 0;
   const itemsSnapshot = items.map((item) => `${item.id}:${item.status}`).join('\u0000');
   const selectedIds = selectedPackageIds.filter((id) => selectablePackageIds.includes(id));
   const allSelectableSelected = selectablePackageIds.length > 0 && selectablePackageIds.every((id) => selectedIds.includes(id));
@@ -202,15 +206,15 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
   useEffect(() => {
     setBatchSelectionOpen(false);
     setSelectedPackageIds([]);
-  }, [enableBatchDeletion, itemsSnapshot]);
+  }, [filter, itemsSnapshot]);
   useEffect(() => {
     const closeFromOutside = (event: PointerEvent) => { if (openMenuPackageId && isOutsideOverflowMenu(event.target, menuRef.current, triggerRef.current)) setOpenMenuPackageId(undefined); };
-    const closeFromEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpenMenuPackageId(undefined); };
+    const closeFromEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && openMenuPackageId) { setOpenMenuPackageId(undefined); triggerRef.current?.focus(); } };
     document.addEventListener('pointerdown', closeFromOutside);
     document.addEventListener('keydown', closeFromEscape);
     return () => { document.removeEventListener('pointerdown', closeFromOutside); document.removeEventListener('keydown', closeFromEscape); };
   }, [openMenuPackageId]);
-  const locate = async (packageId: string, method: 'packages.locate-source' | 'packages.locate-extract') => { const path = await host.invoke<string>(method, { packageId }); await host.invoke('host.showItemInFolder', { path }); };
+  const locate = async (packageId: string, method: 'packages.locate-source' | 'packages.locate-extract') => { const path = await host.invoke<string>(method, { packageId }); await host.invoke('host.showItemInFolder', { path }); setOpenMenuPackageId(undefined); };
   const remove = async (packageId: string, mode: 'lifecycle' | 'records') => {
     if (deletionBusy) return;
     const trigger = triggerRef.current;
@@ -237,8 +241,9 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
   const toggleAllSelection = () => {
     const nextSelection = getNextRecentPackageSelection(items, selectedIds);
     setSelectedPackageIds(nextSelection);
-    setBatchSelectionOpen(nextSelection.length > 0);
   };
+  const exitSelection = () => { setBatchSelectionOpen(false); setSelectedPackageIds([]); };
+  const changeFilter = (nextFilter: AnalysisTaskFilter) => { exitSelection(); setFilter(nextFilter); };
   const requestBatchDeletion = async () => {
     if (selectedIds.length === 0 || deletionBusy) return;
     const packageIds = [...selectedIds];
@@ -279,15 +284,118 @@ function WorkspaceList({ title, items, emptyText, action, onChanged, onError, fa
       setDeletionSubmitting(false);
     }
   };
-  return <section className="workspace-section workspace-list"><header className="workspace-section-heading"><h2>{title} <span>{items.length}</span></h2>{enableBatchDeletion && <div className="workspace-batch-actions"><label className="batch-select-all"><input type="checkbox" checked={allSelectableSelected} disabled={selectablePackageIds.length === 0 || deletionBusy} aria-label="全选最近分析" onChange={toggleAllSelection} /><span>全选</span></label><button ref={batchDeleteTriggerRef} type="button" className="danger-action batch-delete-action" disabled={selectedIds.length === 0 || deletionBusy} onClick={() => void requestBatchDeletion()}>{batchPreviewLoading ? <LoaderCircle className="is-spinning" size={15} aria-hidden="true" /> : <Trash2 size={15} aria-hidden="true" />}<span>{batchPreviewLoading ? '准备中' : `批量删除${selectedIds.length > 0 ? `（${selectedIds.length}）` : ''}`}</span></button></div>}</header>{items.length === 0 ? <div className="workspace-empty"><span>{emptyText}</span></div> : items.map((item) => {
-    const analysisResult = resultByPackageId?.get(item.id);
-    const isRecent = item.status === 'report-ready' || item.status === 'failed';
-    const presentation = getRecentAnalysisPresentation({ status: item.status, displayName: item.displayName, result: analysisResult, failureMessage: failureByPackageId?.get(item.id) });
-    const runtimePresentation = getAnalysisRuntimePresentation(runtimeTimingsByPackageId?.get(item.id));
-    const active = item.status === 'running' || item.status === 'queued';
-    const deleting = deletingPackageId === item.id;
-    return <article ref={highlightedPackageId === item.id ? highlightedRef : undefined} tabIndex={highlightedPackageId === item.id ? -1 : undefined} className={`workspace-list-item${highlightedPackageId === item.id ? ' is-highlighted' : ''}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); setOpenMenuPackageId(item.id); }}><div className="workspace-status-cell">{batchSelectionOpen && enableBatchDeletion && isRecent && <input className="package-selection" type="checkbox" checked={selectedIds.includes(item.id)} disabled={deletionBusy} aria-label={`选择删除${item.displayName}`} onChange={(event) => togglePackageSelection(item.id, event.target.checked)} />}<PackageStatusIcon tone={getPackageTone(item.status, presentation.severity)} /></div><div className="workspace-item-copy"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span title={presentation.detail}>{isRecent ? presentation.detail : item.sourcePath}</span>{isRecent && runtimePresentation && <span className="analysis-runtime-detail" title={runtimePresentation.detail}>{runtimePresentation.detail}</span>}</div>{!isRecent && <span className="package-size">{formatFileSize(item.sourceSizeBytes)}</span>}<span className="package-time"><Clock3 size={13} aria-hidden="true" />{isRecent ? runtimePresentation?.total ?? '暂无用时记录' : formatDetectedAt(item.detectedAt)}</span><div className="card-actions">{action(item)}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" disabled={deletionBusy} aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{onAnalyze && (item.status === 'report-ready' || item.status === 'failed') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'records').catch(onError)}>仅删除记录</button><button className="danger" type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'lifecycle').catch(onError)}>删除诊断包</button></div>}</div></article>;
-  })}{pendingDeletion && <PackageDeletionDialog pending={pendingDeletion} submitting={deletionSubmitting} onCancel={cancelDeletion} onConfirm={() => void confirmDeletion()} />}</section>;
+  const renderActions = (item: PackageItem, active: boolean) => {
+    const primaryAction = item.status === 'pending'
+      ? <button className="secondary-action" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />开始分析</button>
+      : item.status === 'report-ready'
+        ? <button className="secondary-action" onClick={() => void onOpenResult(item.id).catch(onError)}>查看结果</button>
+        : (item.status === 'failed' || item.status === 'cancelled')
+          ? <button className="secondary-action" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>
+          : undefined;
+    return <div className="card-actions">{primaryAction}<button ref={openMenuPackageId === item.id ? triggerRef : undefined} className="overflow-trigger" type="button" disabled={deletionBusy} aria-label={`打开${item.displayName}的更多操作`} aria-haspopup="menu" aria-expanded={openMenuPackageId === item.id} onClick={() => setOpenMenuPackageId((current) => current === item.id ? undefined : item.id)}><MoreHorizontal size={18} aria-hidden="true" /></button>{openMenuPackageId === item.id && <div ref={menuRef} className="overflow-menu" role="menu"><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-source')}><FolderOpen size={15} aria-hidden="true" />定位诊断包</button><button type="button" role="menuitem" onClick={() => void locate(item.id, 'packages.locate-extract')}><FolderOpen size={15} aria-hidden="true" />定位解压目录</button>{(item.status === 'report-ready' || item.status === 'failed' || item.status === 'cancelled') && <button type="button" role="menuitem" onClick={() => void onAnalyze(item.id)}><Play size={15} aria-hidden="true" />重新分析</button>}<button type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'records').catch(onError)}>仅删除记录</button><button className="danger" type="button" role="menuitem" disabled={active || deletionBusy} onClick={() => void remove(item.id, 'lifecycle').catch(onError)}>删除诊断包</button></div>}</div>;
+  };
+  const emptyText = filter === 'pending' ? '当前没有待分析诊断包' : filter === 'active' ? '当前没有正在分析的任务' : filter === 'recent' ? '暂无最近分析结果' : '暂无分析任务';
+  return <section className={`workspace-section workspace-list${batchSelectionOpen ? ' is-selection-mode' : ''}`}>
+    <AnalysisTaskToolbar count={counts.all} filter={filter} counts={counts} sort={sort} selectionOpen={batchSelectionOpen} selectedCount={selectedIds.length} allSelectableSelected={allSelectableSelected} batchBusy={deletionBusy} batchAvailable={batchAvailable} deleteTriggerRef={batchDeleteTriggerRef} onFilterChange={changeFilter} onSortChange={setSort} onEnterSelection={() => setBatchSelectionOpen(true)} onToggleAll={toggleAllSelection} onDelete={() => void requestBatchDeletion()} onExitSelection={exitSelection} />
+    {items.length === 0 ? <div className="workspace-empty"><span>{emptyText}</span></div> : items.map((item) => {
+      const task = taskByPackageId.get(item.id);
+      const active = item.status === 'running' || item.status === 'queued';
+      const highlighted = highlightedPackageId === item.id;
+      const commonProps = { ref: highlighted ? highlightedRef : undefined, tabIndex: highlighted ? -1 : undefined, onContextMenu: (event: React.MouseEvent) => { event.preventDefault(); setOpenMenuPackageId(item.id); } };
+      if (active && task) {
+        const queued = task.status === 'queued';
+        const elapsed = formatElapsed(queued ? task.createdAt : task.startedAt, now);
+        const detail = queued ? `排队中，前方还有 ${getQueuePosition(task.id, tasks)} 个任务 · ${elapsed.replace('已用时', '已等待')}` : `${task.message} · ${elapsed}`;
+        return <article key={item.id} {...commonProps} className={`running-task analysis-task-row${highlighted ? ' is-highlighted' : ''}`}><div className={`running-summary${queued ? ' is-queued' : ''}`}>{queued ? <Clock3 className="queued-task-icon" size={20} aria-label="排队中" /> : <LoaderCircle className="is-spinning" size={20} aria-label="正在分析" />}<div className="workspace-item-copy"><strong title={item.displayName}>{item.displayName}</strong><span title={detail}>{detail}</span></div>{queued ? <div className="queued-state"><Clock3 size={14} aria-hidden="true" />等待执行</div> : <div className="task-progress"><progress aria-label={`${item.displayName}分析进度`} value={task.progress} max={100}>{task.progress}%</progress><strong>{task.progress}%</strong></div>}{renderActions(item, true)}</div>{!queued && <ol className="stage-progress" aria-label="分析阶段">{getAnalysisStageItems(task.stage).map((stage) => <li className={`state-${stage.state}`} key={stage.id}><span aria-hidden="true">{stage.state === 'complete' ? '✓' : ''}</span>{stage.label}</li>)}</ol>}</article>;
+      }
+      const isRecent = item.status === 'report-ready' || item.status === 'failed' || item.status === 'cancelled';
+      const presentation = getRecentAnalysisPresentation({ status: item.status, displayName: item.displayName, result: resultByPackageId.get(item.id), failureMessage: task?.errorMessage ?? task?.message });
+      const runtimePresentation = getAnalysisRuntimePresentation(task?.runtimeTimings);
+      const detail = item.status === 'failed' ? `${presentation.detail} · ${item.displayName}` : isRecent ? presentation.detail : item.sourcePath;
+      const metadata = isRecent ? runtimePresentation?.total ?? '暂无用时记录' : `${formatFileSize(item.sourceSizeBytes)} · ${formatDetectedAt(item.detectedAt)}`;
+      return <article key={item.id} {...commonProps} className={`workspace-list-item analysis-task-row${highlighted ? ' is-highlighted' : ''}`}><div className="workspace-status-cell">{batchSelectionOpen && isRecent && <input className="package-selection" type="checkbox" checked={selectedIds.includes(item.id)} disabled={deletionBusy} aria-label={`选择删除${item.displayName}`} onChange={(event) => togglePackageSelection(item.id, event.target.checked)} />}<PackageStatusIcon status={item.status} tone={getPackageTone(item.status, presentation.severity)} /></div><div className="workspace-item-copy"><div className="task-title-line"><strong className={isRecent ? `recent-title severity-${presentation.severity}` : undefined} title={presentation.title}>{presentation.title}</strong><span className="task-inline-meta">{metadata}</span></div><span title={detail}>{detail}</span>{isRecent && runtimePresentation && <span className="analysis-runtime-detail" title={runtimePresentation.detail}>{runtimePresentation.detail}</span>}</div>{renderActions(item, false)}</article>;
+    })}
+    {pendingDeletion && <PackageDeletionDialog pending={pendingDeletion} submitting={deletionSubmitting} onCancel={cancelDeletion} onConfirm={() => void confirmDeletion()} />}
+  </section>;
+}
+
+interface AnalysisTaskToolbarProps {
+  count: number;
+  filter: AnalysisTaskFilter;
+  counts: Record<AnalysisTaskFilter, number>;
+  sort: AnalysisTaskSort;
+  selectionOpen: boolean;
+  selectedCount: number;
+  allSelectableSelected: boolean;
+  batchBusy: boolean;
+  batchAvailable: boolean;
+  deleteTriggerRef?: React.RefObject<HTMLButtonElement | null>;
+  onFilterChange: (filter: AnalysisTaskFilter) => void;
+  onSortChange: (sort: AnalysisTaskSort) => void;
+  onEnterSelection: () => void;
+  onToggleAll: () => void;
+  onDelete: () => void;
+  onExitSelection: () => void;
+}
+
+/**
+ * 工具栏在浏览与批量选择之间切换完整上下文，避免筛选、排序和删除操作同时挤在标题右侧。
+ * 两个菜单共用键盘导航组件，Escape 关闭后会把焦点交还给原触发按钮。
+ */
+export function AnalysisTaskToolbar(props: AnalysisTaskToolbarProps) {
+  const filterOptions = [
+    { value: 'all' as const, label: '全部任务', count: props.counts.all },
+    { value: 'pending' as const, label: '待分析', count: props.counts.pending },
+    { value: 'active' as const, label: '正在分析', count: props.counts.active },
+    { value: 'recent' as const, label: '最近分析', count: props.counts.recent }
+  ];
+  const sortOptions = [
+    { value: 'action-priority' as const, label: '行动优先' },
+    { value: 'recently-updated' as const, label: '最近更新' }
+  ];
+  return <header className="workspace-section-heading analysis-task-toolbar"><h2>分析任务 <span>{props.count}</span></h2>{props.selectionOpen ? <div className="selection-toolbar"><span className="selection-count" role="status">已选择 {props.selectedCount} 项</span><button type="button" disabled={props.batchBusy} onClick={props.onToggleAll}><Check size={15} aria-hidden="true" />{props.allSelectableSelected ? '取消全选' : '全选'}</button><button ref={props.deleteTriggerRef} type="button" className="danger-action" disabled={props.selectedCount === 0 || props.batchBusy} onClick={props.onDelete}>{props.batchBusy ? <LoaderCircle className="is-spinning" size={15} aria-hidden="true" /> : <Trash2 size={15} aria-hidden="true" />}{props.batchBusy ? '处理中' : `批量删除${props.selectedCount ? `（${props.selectedCount}）` : ''}`}</button><button type="button" onClick={props.onExitSelection}><X size={15} aria-hidden="true" />退出</button></div> : <div className="analysis-task-toolbar-actions"><TaskToolbarMenu ariaLabel="筛选分析任务" icon={<ListFilter size={16} aria-hidden="true" />} value={props.filter} options={filterOptions} onChange={props.onFilterChange} /><TaskToolbarMenu ariaLabel="排序分析任务" icon={<ArrowUpDown size={16} aria-hidden="true" />} value={props.sort} options={sortOptions} onChange={props.onSortChange} /><button type="button" title={props.batchAvailable ? '批量管理终态任务' : '当前筛选没有可批量删除的任务'} disabled={!props.batchAvailable} onClick={props.onEnterSelection}><ListChecks size={16} aria-hidden="true" />批量管理</button></div>}</header>;
+}
+
+interface TaskToolbarMenuOption<T extends string> {
+  value: T;
+  label: string;
+  count?: number;
+}
+
+function TaskToolbarMenu<T extends string>({ ariaLabel, icon, value, options, onChange }: { ariaLabel: string; icon: React.ReactNode; value: T; options: Array<TaskToolbarMenuOption<T>>; onChange: (value: T) => void }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const requestedFocusRef = useRef(0);
+  const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
+  const selected = options[selectedIndex]!;
+  const openAndFocus = (index: number) => { requestedFocusRef.current = index; setOpen(true); };
+  const close = (restoreFocus: boolean) => { setOpen(false); if (restoreFocus) window.queueMicrotask(() => triggerRef.current?.focus()); };
+  useEffect(() => {
+    if (!open) return;
+    window.queueMicrotask(() => itemRefs.current[requestedFocusRef.current]?.focus());
+    const closeFromOutside = (event: PointerEvent) => {
+      if (event.target && !menuRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) close(false);
+    };
+    document.addEventListener('pointerdown', closeFromOutside);
+    return () => document.removeEventListener('pointerdown', closeFromOutside);
+  }, [open]);
+  const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    openAndFocus(event.key === 'ArrowDown' ? selectedIndex : options.length - 1);
+  };
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = Math.max(0, itemRefs.current.findIndex((item) => item === document.activeElement));
+    if (event.key === 'Escape') { event.preventDefault(); close(true); return; }
+    if (event.key === 'Enter') { event.preventDefault(); itemRefs.current[currentIndex]?.click(); return; }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : event.key === 'ArrowDown' ? (currentIndex + 1) % options.length : (currentIndex - 1 + options.length) % options.length;
+    itemRefs.current[nextIndex]?.focus();
+  };
+  return <div className="task-toolbar-menu"><button ref={triggerRef} type="button" aria-label={ariaLabel} aria-haspopup="menu" aria-expanded={open} onKeyDown={handleTriggerKeyDown} onClick={() => open ? close(false) : openAndFocus(selectedIndex)}>{icon}<span>{selected.label}{selected.count === undefined ? '' : ` ${selected.count}`}</span><ChevronDown size={14} aria-hidden="true" /></button>{open && <div ref={menuRef} className="toolbar-menu" role="menu" onKeyDown={handleMenuKeyDown}>{options.map((option, index) => <button ref={(element) => { itemRefs.current[index] = element; }} type="button" role="menuitemradio" aria-checked={option.value === value} key={option.value} onClick={() => { onChange(option.value); close(true); }}><span className="menu-check" aria-hidden="true">{option.value === value ? <Check size={14} /> : undefined}</span><span>{option.label}</span>{option.count !== undefined && <span className="menu-count">{option.count}</span>}</button>)}</div>}</div>;
 }
 
 /** 删除前先展示后端预览结果，所有确认和取消路径都留在应用内，避免触发 iframe 原生模态框限制。 */
@@ -302,9 +410,7 @@ function PackageDeletionDialog({ pending, submitting, onCancel, onConfirm }: { p
   return <div className="package-deletion-backdrop" role="presentation" onMouseDown={onCancel}><section ref={dialogRef} className="package-deletion-dialog" role="dialog" aria-modal="true" aria-labelledby="package-deletion-title" aria-describedby="package-deletion-message" onMouseDown={(event) => event.stopPropagation()}><header><h2 id="package-deletion-title">{title}</h2></header><p id="package-deletion-message" className="package-deletion-message">{message}</p><footer className="dialog-actions"><button type="button" disabled={submitting} onClick={onCancel}>取消</button><button type="button" className="danger-action" disabled={submitting} onClick={onConfirm}>{submitting ? '删除中…' : '确认删除'}</button></footer></section></div>;
 }
 
-function RunningTasks({ tasks, packages, now }: { tasks: TaskItem[]; packages: PackageItem[]; now: number }) { return <section className="workspace-section workspace-list"><header className="workspace-section-heading"><h2>正在分析 <span>{tasks.length}</span></h2></header>{tasks.length === 0 ? <div className="workspace-empty"><span>当前没有运行中的分析任务</span></div> : tasks.map((task) => { const queued = task.status === 'queued'; const elapsed = formatElapsed(queued ? task.createdAt : task.startedAt, now); const detail = queued ? `排队中，前方还有 ${getQueuePosition(task.id, tasks)} 个任务 · ${elapsed.replace('已用时', '已等待')}` : `${task.message} · ${elapsed}`; return <article className="running-task" key={task.id}><div className="running-summary"><LoaderCircle className={queued ? '' : 'is-spinning'} size={20} aria-hidden="true" /><div><strong>{packages.find((item) => item.id === task.packageId)?.displayName ?? '诊断包'}</strong><span>{detail}</span></div><div className="task-progress"><progress value={task.progress} max={100}>{task.progress}%</progress><strong>{task.progress}%</strong></div></div><ol className="stage-progress" aria-label="分析阶段">{getAnalysisStageItems(task.stage).map((stage) => <li className={`state-${stage.state}`} key={stage.id}><span aria-hidden="true">{stage.state === 'complete' ? '✓' : ''}</span>{stage.label}</li>)}</ol></article>; })}</section>; }
-
-function PackageStatusIcon({ tone }: { tone: ReturnType<typeof getPackageTone> }) { if (tone === 'danger') return <CircleAlert className="package-status-icon is-danger" size={19} aria-label="严重诊断或分析失败" />; if (tone === 'warning') return <CircleAlert className="package-status-icon is-warning" size={19} aria-label="警告诊断" />; if (tone === 'success') return <CircleCheck className="package-status-icon is-success" size={19} aria-label="分析完成" />; return <FilePlus2 className="package-status-icon" size={19} aria-hidden="true" />; }
+function PackageStatusIcon({ status, tone }: { status: string; tone: ReturnType<typeof getPackageTone> }) { if (tone === 'danger') return <CircleAlert className="package-status-icon is-danger" size={19} aria-label="严重诊断或分析失败" />; if (tone === 'warning') return <CircleAlert className="package-status-icon is-warning" size={19} aria-label="警告诊断" />; if (tone === 'success') return <CircleCheck className="package-status-icon is-success" size={19} aria-label="分析完成" />; if (status === 'cancelled') return <CircleAlert className="package-status-icon is-cancelled" size={19} aria-label="分析已取消" />; return <FilePlus2 className="package-status-icon" size={19} aria-label="待分析" />; }
 
 function ResultMoreMenu({ packageId }: { packageId: string }) {
   const [open, setOpen] = useState(false);

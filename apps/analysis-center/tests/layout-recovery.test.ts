@@ -6,14 +6,14 @@ const styleSource = await readFile(new URL('../renderer/style.css', import.meta.
 const hostSource = await readFile(new URL('../renderer/host-api.ts', import.meta.url), 'utf8');
 
 describe('分析中心 V1 工作区', () => {
-  it('按监控状态、待分析、正在分析、最近分析和手动导入组织工作区', () => {
+  it('按监控状态、统一分析任务列表和手动导入组织工作区', () => {
     expect(viewSource).toContain('className="workspace-dropzone"');
-    expect(viewSource).toContain('待分析');
-    expect(viewSource).toContain('正在分析');
-    expect(viewSource).toContain('最近分析');
-    expect(viewSource).toContain('getWorkspaceGroups(packages)');
+    expect(viewSource).toContain('<AnalysisTaskList packages={packages} tasks={tasks}');
+    expect(viewSource).toContain('export function AnalysisTaskToolbar');
+    expect(viewSource).toContain("useState<AnalysisTaskFilter>('all')");
+    expect(viewSource).toContain("useState<AnalysisTaskSort>('action-priority')");
     expect(styleSource).toContain('.workspace-view { max-width: 1370px;');
-    expect(styleSource).toContain('.workspace-list-item {');
+    expect(styleSource).toContain('.analysis-task-row {');
   });
 
   it('首页状态条与设置弹窗明确区分新增自动分析和手动扫描存量', () => {
@@ -59,7 +59,7 @@ describe('分析中心 V1 工作区', () => {
 
   it('使用 1100px 产品边界在固定证据栏和覆盖式 Drawer 之间切换', () => {
     expect(viewSource).toContain('className="workspace-dropzone"');
-    expect(viewSource).toContain('workspace-list-item${');
+    expect(viewSource).toContain('analysis-task-row${highlighted');
     expect(viewSource).toContain('className="result-evidence-panel"');
     expect(viewSource).toContain('当前主要诊断没有关联证据');
     expect(viewSource).toContain('诊断证据</button>');
@@ -84,11 +84,13 @@ describe('分析中心 V1 工作区', () => {
     expect(styleSource).toContain('.evidence-drawer');
   });
 
-  it('800px 最近分析行的操作区固定在末列，不会因缺少文件大小而溢出窗口', () => {
-    expect(styleSource).toContain('.package-size { grid-column: 3;');
-    expect(styleSource).toContain('.package-time { grid-column: 4;');
-    expect(styleSource).toContain('.card-actions { grid-column: 5;');
-    expect(styleSource).toContain('.card-actions { grid-column: 4; }');
+  it('普通任务行只保留状态、信息和操作区域，时间与大小不再独占列', () => {
+    expect(styleSource).toContain('grid-template-columns: 34px minmax(0, 1fr) auto;');
+    expect(styleSource).toContain('.running-task.analysis-task-row { display: block; }');
+    expect(styleSource).toContain('.task-title-line {');
+    expect(styleSource).toContain('.task-inline-meta {');
+    expect(styleSource).not.toContain('.package-size { grid-column: 3;');
+    expect(styleSource).not.toContain('.package-time { grid-column: 4;');
   });
 
   it('首次加载和应用事件监听不因监控设置对象更新而重复注册', () => {
@@ -104,14 +106,15 @@ describe('分析中心 V1 工作区', () => {
     expect(viewSource).toContain('const settingsDialog = settingsOpen && <SettingsDialog');
   });
 
-  it('最近分析默认隐藏单项勾选框，点击全选后进入批量选择模式', () => {
+  it('默认隐藏单项勾选框，点击批量管理后进入上下文选择模式', () => {
     expect(viewSource).toContain('const [batchSelectionOpen, setBatchSelectionOpen] = useState(false);');
-    expect(viewSource).toContain('const nextSelection = getNextRecentPackageSelection(items, selectedIds);');
-    expect(viewSource).toContain('setBatchSelectionOpen(nextSelection.length > 0);');
-    expect(viewSource).toContain('batchSelectionOpen && enableBatchDeletion && isRecent &&');
+    expect(viewSource).toContain('onEnterSelection={() => setBatchSelectionOpen(true)}');
+    expect(viewSource).toContain('batchSelectionOpen && isRecent &&');
+    expect(viewSource).toContain('props.selectionOpen ? <div className="selection-toolbar">');
   });
 
   it('清空全选或删除完成后退出批量选择模式', () => {
+    expect(viewSource).toContain('const exitSelection = () => { setBatchSelectionOpen(false); setSelectedPackageIds([]); };');
     expect(viewSource).toContain('setBatchSelectionOpen(false);');
     expect(viewSource).toContain('setSelectedPackageIds([]);');
   });

@@ -1,18 +1,76 @@
 import { describe, expect, it } from 'vitest';
-import { formatFileSize, getAnalysisStageItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, getWorkspaceGroups, shouldShowSysinfoReport } from '../renderer/workspace-presentation';
+import { formatFileSize, getAnalysisStageItems, getAnalysisTaskFilterCounts, getAnalysisTaskItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, getWorkspaceGroups, shouldShowSysinfoReport } from '../renderer/workspace-presentation';
 
 describe('分析中心工作区呈现', () => {
-  it('最近分析批量选择只覆盖已完成或失败的诊断包，并支持再次点击全选清空', () => {
+  it('最近分析批量选择覆盖所有终态诊断包，并支持再次点击全选清空', () => {
     const packages = [
       { id: 'failed', status: 'failed' },
       { id: 'success', status: 'report-ready' },
+      { id: 'cancelled', status: 'cancelled' },
       { id: 'pending', status: 'pending' },
       { id: 'running', status: 'running' }
     ] as const;
 
-    expect(getRecentAnalysisPackageIds(packages)).toEqual(['failed', 'success']);
-    expect(getNextRecentPackageSelection(packages, [])).toEqual(['failed', 'success']);
-    expect(getNextRecentPackageSelection(packages, ['failed', 'success'])).toEqual([]);
+    expect(getRecentAnalysisPackageIds(packages)).toEqual(['failed', 'success', 'cancelled']);
+    expect(getNextRecentPackageSelection(packages, [])).toEqual(['failed', 'success', 'cancelled']);
+    expect(getNextRecentPackageSelection(packages, ['failed', 'success', 'cancelled'])).toEqual([]);
+  });
+
+  it('统一任务筛选计数包含待分析、活动任务和全部终态', () => {
+    const packages = [
+      { id: 'pending', status: 'pending' },
+      { id: 'queued', status: 'queued' },
+      { id: 'running', status: 'running' },
+      { id: 'success', status: 'report-ready' },
+      { id: 'failed', status: 'failed' },
+      { id: 'cancelled', status: 'cancelled' }
+    ];
+
+    expect(getAnalysisTaskFilterCounts(packages)).toEqual({ all: 6, pending: 1, active: 2, recent: 3 });
+  });
+
+  it('行动优先排序置顶运行与排队任务，并保持队列和待分析的先来先处理顺序', () => {
+    const packages = [
+      packageItem('ready', 'report-ready', '2026-08-28T10:00:00Z', '2026-08-28T16:00:00Z'),
+      packageItem('pending-new', 'pending', '2026-08-28T15:00:00Z'),
+      packageItem('failed', 'failed', '2026-08-28T11:00:00Z', '2026-08-28T17:00:00Z'),
+      packageItem('queued', 'queued', '2026-08-28T12:00:00Z'),
+      packageItem('running', 'running', '2026-08-28T13:00:00Z'),
+      packageItem('cancelled', 'cancelled', '2026-08-28T09:00:00Z', '2026-08-28T14:00:00Z'),
+      packageItem('pending-old', 'pending', '2026-08-28T08:00:00Z')
+    ];
+    const tasks = [
+      taskItem('task-running', 'running', 'running', '2026-08-28T13:00:00Z'),
+      taskItem('task-queued', 'queued', 'queued', '2026-08-28T12:00:00Z')
+    ];
+
+    expect(getAnalysisTaskItems(packages, tasks, 'all', 'action-priority').map((item) => item.package.id)).toEqual([
+      'running', 'queued', 'failed', 'cancelled', 'pending-old', 'pending-new', 'ready'
+    ]);
+  });
+
+  it('状态筛选复用统一列表，最近更新排序使用任务或分析的最新时间', () => {
+    const packages = [
+      packageItem('pending', 'pending', '2026-08-28T12:00:00Z'),
+      packageItem('running', 'running', '2026-08-28T09:00:00Z'),
+      packageItem('failed', 'failed', '2026-08-28T08:00:00Z', '2026-08-28T13:00:00Z'),
+      packageItem('ready', 'report-ready', '2026-08-28T07:00:00Z', '2026-08-28T11:00:00Z')
+    ];
+    const tasks = [taskItem('task-running', 'running', 'running', '2026-08-28T14:00:00Z')];
+
+    expect(getAnalysisTaskItems(packages, tasks, 'active', 'recently-updated').map((item) => item.package.id)).toEqual(['running']);
+    expect(getAnalysisTaskItems(packages, tasks, 'recent', 'recently-updated').map((item) => item.package.id)).toEqual(['failed', 'ready']);
+    expect(getAnalysisTaskItems(packages, tasks, 'all', 'recently-updated').map((item) => item.package.id)).toEqual(['running', 'failed', 'pending', 'ready']);
+  });
+
+  it('重新分析时最近更新排序使用当前任务时间，不受上一次分析时间干扰', () => {
+    const packages = [
+      packageItem('rerunning', 'running', '2026-08-28T08:00:00Z', '2026-08-28T09:00:00Z'),
+      packageItem('pending', 'pending', '2026-08-28T12:00:00Z')
+    ];
+    const tasks = [{ id: 'task-rerunning', packageId: 'rerunning', status: 'running', createdAt: '2026-08-28T13:00:00Z', startedAt: '2026-08-28T13:01:00Z' }];
+
+    expect(getAnalysisTaskItems(packages, tasks, 'all', 'recently-updated').map((item) => item.package.id)).toEqual(['rerunning', 'pending']);
   });
 
   it('把成功和失败统一放入最近分析，待分析与活动任务保持独立', () => {
@@ -87,6 +145,13 @@ describe('分析中心工作区呈现', () => {
     })).toEqual({ title: '分析失败', detail: '诊断包无法解压。', severity: 'critical' });
   });
 
+  it('分析取消后显示明确终态，同时保留诊断包文件名', () => {
+    expect(getRecentAnalysisPresentation({
+      status: 'cancelled',
+      displayName: 'cancelled.tgz'
+    })).toEqual({ title: '分析已取消', detail: 'cancelled.tgz', severity: 'info' });
+  });
+
   it('报告已就绪但结果数据缺失时不误报未发现异常', () => {
     expect(getRecentAnalysisPresentation({
       status: 'report-ready',
@@ -125,3 +190,11 @@ describe('分析中心工作区呈现', () => {
     expect(message).toContain('任务 2 条');
   });
 });
+
+function packageItem(id: string, status: string, detectedAt: string, lastAnalysisAt?: string) {
+  return { id, status, detectedAt, lastAnalysisAt };
+}
+
+function taskItem(id: string, packageId: string, status: string, createdAt: string) {
+  return { id, packageId, status, createdAt };
+}

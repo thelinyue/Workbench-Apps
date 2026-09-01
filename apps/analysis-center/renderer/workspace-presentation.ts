@@ -1,6 +1,28 @@
 import type { AppHostEvent } from '../../../sdk/app-contract';
 
 export type AnalysisTaskStage = 'identify-package' | 'parse-system-events' | 'analyze-storage' | 'aggregate-anomalies' | 'form-conclusion';
+export type AnalysisTaskFilter = 'all' | 'pending' | 'active' | 'recent';
+export type AnalysisTaskSort = 'action-priority' | 'recently-updated';
+
+interface AnalysisTaskPackageView {
+  id: string;
+  status: string;
+  detectedAt: string;
+  lastAnalysisAt?: string;
+}
+
+interface AnalysisTaskRecordView {
+  id: string;
+  packageId: string;
+  status: string;
+  createdAt: string;
+  startedAt?: string;
+}
+
+export interface AnalysisTaskListItem<P, T> {
+  package: P;
+  task?: T;
+}
 
 const ANALYSIS_STAGES: Array<{ id: AnalysisTaskStage; label: string }> = [
   { id: 'identify-package', label: '识别诊断包' },
@@ -15,8 +37,80 @@ export function getWorkspaceGroups<T extends { status: string; detectedAt: strin
   const byAnalysisTime = (left: T, right: T) => Date.parse(right.lastAnalysisAt ?? right.detectedAt) - Date.parse(left.lastAnalysisAt ?? left.detectedAt);
   return {
     pending: packages.filter((item) => item.status === 'pending').sort(byDetectedAt),
-    recent: packages.filter((item) => item.status === 'report-ready' || item.status === 'failed').sort(byAnalysisTime).slice(0, 20)
+    recent: packages.filter((item) => isTerminalPackageStatus(item.status)).sort(byAnalysisTime).slice(0, 20)
   };
+}
+
+/**
+ * 统一列表只在展示层合并诊断包与最新任务，不改变后端生命周期。排序键只使用稳定的
+ * 创建或分析时间，因此每秒更新进度不会造成运行中任务来回跳动。
+ */
+export function getAnalysisTaskItems<P extends AnalysisTaskPackageView, T extends AnalysisTaskRecordView>(
+  packages: readonly P[],
+  tasks: readonly T[],
+  filter: AnalysisTaskFilter,
+  sort: AnalysisTaskSort
+): Array<AnalysisTaskListItem<P, T>> {
+  const latestTaskByPackageId = new Map<string, T>();
+  for (const task of tasks) {
+    const current = latestTaskByPackageId.get(task.packageId);
+    if (!current || compareIsoTime(task.createdAt, current.createdAt) > 0) latestTaskByPackageId.set(task.packageId, task);
+  }
+  const items = packages
+    .filter((item) => matchesAnalysisTaskFilter(item.status, filter))
+    .map((item) => ({ package: item, task: latestTaskByPackageId.get(item.id) }));
+  return items.sort(sort === 'recently-updated' ? compareRecentlyUpdated : compareActionPriority);
+}
+
+/** 筛选菜单的数量来自同一份诊断包快照，避免菜单标签与实际列表不一致。 */
+export function getAnalysisTaskFilterCounts(packages: readonly { status: string }[]): Record<AnalysisTaskFilter, number> {
+  return {
+    all: packages.length,
+    pending: packages.filter((item) => item.status === 'pending').length,
+    active: packages.filter((item) => item.status === 'queued' || item.status === 'running').length,
+    recent: packages.filter((item) => isTerminalPackageStatus(item.status)).length
+  };
+}
+
+function matchesAnalysisTaskFilter(status: string, filter: AnalysisTaskFilter): boolean {
+  if (filter === 'pending') return status === 'pending';
+  if (filter === 'active') return status === 'queued' || status === 'running';
+  if (filter === 'recent') return isTerminalPackageStatus(status);
+  return true;
+}
+
+function compareActionPriority<P extends AnalysisTaskPackageView, T extends AnalysisTaskRecordView>(left: AnalysisTaskListItem<P, T>, right: AnalysisTaskListItem<P, T>): number {
+  const rank = (status: string) => ({ running: 0, queued: 1, failed: 2, cancelled: 3, pending: 4, 'report-ready': 5 }[status] ?? 6);
+  const statusDifference = rank(left.package.status) - rank(right.package.status);
+  if (statusDifference) return statusDifference;
+  if (left.package.status === 'running' || left.package.status === 'queued') {
+    return compareIsoTime(left.task?.createdAt ?? left.package.detectedAt, right.task?.createdAt ?? right.package.detectedAt)
+      || left.package.id.localeCompare(right.package.id);
+  }
+  if (left.package.status === 'pending') {
+    return compareIsoTime(left.package.detectedAt, right.package.detectedAt) || left.package.id.localeCompare(right.package.id);
+  }
+  return compareIsoTime(getActivityTime(right), getActivityTime(left)) || left.package.id.localeCompare(right.package.id);
+}
+
+function compareRecentlyUpdated<P extends AnalysisTaskPackageView, T extends AnalysisTaskRecordView>(left: AnalysisTaskListItem<P, T>, right: AnalysisTaskListItem<P, T>): number {
+  return compareIsoTime(getActivityTime(right), getActivityTime(left)) || left.package.id.localeCompare(right.package.id);
+}
+
+function getActivityTime<P extends AnalysisTaskPackageView, T extends AnalysisTaskRecordView>(item: AnalysisTaskListItem<P, T>): string {
+  if (item.package.status === 'running' || item.package.status === 'queued') {
+    return item.task?.startedAt ?? item.task?.createdAt ?? item.package.detectedAt;
+  }
+  if (item.package.status === 'pending') return item.package.detectedAt;
+  return item.package.lastAnalysisAt ?? item.task?.startedAt ?? item.task?.createdAt ?? item.package.detectedAt;
+}
+
+function compareIsoTime(left: string, right: string): number {
+  return Date.parse(left) - Date.parse(right);
+}
+
+function isTerminalPackageStatus(status: string): boolean {
+  return status === 'report-ready' || status === 'failed' || status === 'cancelled';
 }
 
 /** ZIP 诊断包不包含 sysinfo.json，结果页不应提供无法使用的完整 sysinfo 入口。 */
@@ -26,7 +120,7 @@ export function shouldShowSysinfoReport(sourcePath: string): boolean {
 
 /** 批量删除只作用于最近分析中的终态诊断包，避免误操作排队或正在分析的数据。 */
 export function getRecentAnalysisPackageIds(packages: readonly { id: string; status: string }[]): string[] {
-  return packages.filter((item) => item.status === 'report-ready' || item.status === 'failed').map((item) => item.id);
+  return packages.filter((item) => isTerminalPackageStatus(item.status)).map((item) => item.id);
 }
 
 /** 全选按钮在“全部选中”和“全部取消”之间切换，返回新的选择快照供渲染层保存。 */
@@ -62,6 +156,7 @@ interface RecentAnalysisPresentationInput {
 /** 最近分析必须区分“确认无主要诊断”和“结果尚未取到”，避免把数据缺失误报为正常。 */
 export function getRecentAnalysisPresentation(input: RecentAnalysisPresentationInput): { title: string; detail: string; severity: string } {
   if (input.status === 'failed') return { title: '分析失败', detail: input.failureMessage ?? '分析失败，请查看失败原因。', severity: 'critical' };
+  if (input.status === 'cancelled') return { title: '分析已取消', detail: input.displayName, severity: 'info' };
   const diagnosis = input.result?.diagnoses[0];
   if (diagnosis) return { title: diagnosis.title, detail: input.displayName, severity: diagnosis.severity };
   if (input.result) return { title: '未发现明确异常', detail: input.displayName, severity: 'info' };
