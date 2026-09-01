@@ -79,6 +79,18 @@ const sampleSysinfo = {
   unknownSection: { note: '<script>alert("xss")</script>' }
 };
 
+const sampleLsblk = `NAME                                     MAJ:MIN RM   SIZE RO TYPE  MOUNTPOINTS
+loop0                                      7:0    0 647.3M  1 loop  /rootfs/base
+sda                                        8:0    0   3.6T  0 disk
+├─sda1                                     8:1    0  15.3G  0 part
+└─sda2                                     8:2    0   3.6T  0 part
+  └─md1                                    9:1    0   3.6T  0 raid1
+    └─pool-volume                          253:0  0   3.6T  0 lvm   /home
+                                                                    /volume1
+mmcblk0                                  179:0    0  29.2G  0 disk
+zram0                                    254:0    0   962M  0 disk  [SWAP]
+`;
+
 const sampleSmartTranslations: Record<string, string> = {
   Raw_Read_Error_Rate: '原始读取错误率',
   temperature: '温度',
@@ -170,6 +182,39 @@ describe('完整 sysinfo 可视化报告', () => {
     expect(html).toContain('&quot;client&quot;: &quot;web&quot;');
     expect(html).toContain('&quot;used_for&quot;: &quot;Storage Pool 1&quot;');
     expect(html).toContain('&quot;label&quot;: &quot;Hard Drive 1&quot;');
+  });
+
+  it('按 sysinfo 硬盘名单在完整报告中展示 lsblk 存储链路并保留原文', () => {
+    const report = normalizeSysinfo(sampleSysinfo, [], sampleLsblk);
+    expect(report.blockDevicesRaw).toBe(sampleLsblk);
+    expect(report.blockDevices.map((row) => row.name)).toEqual(['sda', 'sda1', 'sda2', 'md1', 'pool-volume']);
+    expect(report.blockDevices.at(-1)?.mountpoints).toEqual(['/home', '/volume1']);
+
+    const html = renderSysinfoReport(report, {
+      packageName: '_2608281619.tgz',
+      generatedAt: new Date('2026-08-28T10:00:00.000Z')
+    });
+    const table = html.match(/<table class="block-devices-table">([\s\S]*?)<\/table>/)?.[1] ?? '';
+    expect(table).toContain('<th>设备</th>');
+    expect(table).toContain('data-depth="2"');
+    expect(table).toContain('md1');
+    expect(table).toContain('/home');
+    expect(table).toContain('/volume1');
+    expect(table).not.toContain('loop0');
+    expect(table).not.toContain('mmcblk0');
+    expect(table).not.toContain('zram0');
+    expect(html).toContain('完整 lsblk.log 原始数据');
+    expect(html).toContain('loop0');
+    expect(html).toContain('mmcblk0');
+  });
+
+  it('缺少 lsblk 时显示中文空状态但不影响完整报告生成', () => {
+    const html = renderSysinfoReport(normalizeSysinfo(sampleSysinfo), {
+      packageName: '_2608281619.tgz',
+      generatedAt: new Date('2026-08-28T10:00:00.000Z')
+    });
+    expect(html).toContain('块设备存储链路');
+    expect(html).toContain('未提供 lsblk.log');
   });
 
   it('为设备序列号、硬盘型号和硬盘序列号生成复制原始值的按钮', () => {

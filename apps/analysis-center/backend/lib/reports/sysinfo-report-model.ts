@@ -1,4 +1,5 @@
 import type { MemoryModule } from '../parsers/dmidecode-memory';
+import { parseLsblk, selectStorageBlockDevices, type LsblkDeviceRow } from '../parsers/lsblk';
 
 export interface SysinfoSystemOverview {
   deviceName: string;
@@ -59,6 +60,8 @@ export interface SysinfoReportModel {
   memory: MemoryModule[];
   networks: SysinfoNetworkInterface[];
   storagePools: SysinfoStoragePool[];
+  blockDevicesRaw: string;
+  blockDevices: LsblkDeviceRow[];
   raw: Record<string, unknown>;
 }
 
@@ -69,12 +72,13 @@ export interface SysinfoReportModel {
  * 只负责忠实展示采集快照。除容量合计和 used_for 分组外，不从字段组合推导 RAID、健康分
  * 或新的故障结论，避免可视化页面与正式诊断结果出现语义冲突。
  */
-export function normalizeSysinfo(value: unknown, memory: MemoryModule[] = []): SysinfoReportModel {
+export function normalizeSysinfo(value: unknown, memory: MemoryModule[] = [], blockDevicesRaw = ''): SysinfoReportModel {
   if (!isRecord(value)) throw new Error('sysinfo.json 顶层必须是 JSON 对象。');
   const network = record(value.network);
   const disk = record(value.disk);
   const networks = array(network.interface).filter(isRecord).map(normalizeNetwork);
   const disks = array(disk.devices).filter(isRecord).map(normalizeDisk).filter((item): item is SysinfoDisk => Boolean(item));
+  const blockDevices = selectStorageBlockDevices(parseLsblk(blockDevicesRaw), disks.map((item) => item.device || item.name));
   const pools = new Map<string, SysinfoDisk[]>();
   for (const item of disks) {
     const name = item.usedFor || '未分配存储池';
@@ -94,6 +98,8 @@ export function normalizeSysinfo(value: unknown, memory: MemoryModule[] = []): S
       const sizes = poolDisks.map((item) => item.sizeBytes).filter((size): size is number => size !== undefined);
       return { name, diskCount: poolDisks.length, totalSizeBytes: sizes.length > 0 ? sizes.reduce((sum, size) => sum + size, 0) : undefined, disks: poolDisks };
     }),
+    blockDevicesRaw,
+    blockDevices,
     raw: value
   };
 }

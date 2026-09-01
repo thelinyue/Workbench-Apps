@@ -5,6 +5,9 @@ import type { SysinfoDisk, SysinfoReportModel, SysinfoSmartAttribute } from './s
 export { normalizeSysinfo } from './sysinfo-report-model';
 export type { SysinfoReportModel } from './sysinfo-report-model';
 
+/** 报告格式版本用于让升级后的渲染器主动淘汰旧版离线 HTML 缓存。 */
+export const SYSINFO_REPORT_FORMAT_VERSION = 2;
+
 export interface SysinfoReportMetadata {
   packageName: string;
   generatedAt: Date;
@@ -76,6 +79,7 @@ export function renderSysinfoReport(model: SysinfoReportModel, metadata: Sysinfo
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="sysinfo-report-format" content="${SYSINFO_REPORT_FORMAT_VERSION}">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${copyScriptHash}'; base-uri 'none'; form-action 'none'">
   <title>完整 sysinfo 报告 - ${escapeHtml(metadata.packageName)}</title>
   <style>${reportCss}</style>
@@ -86,7 +90,7 @@ export function renderSysinfoReport(model: SysinfoReportModel, metadata: Sysinfo
       <div>
         <p class="product-name">Hephaestus Workbench 分析中心</p>
         <h1>完整 sysinfo 报告</h1>
-        <p class="report-description">系统、网络和硬盘数据来自 sysinfo.json，内存数据来自 dmidecode.log。</p>
+        <p class="report-description">系统、网络和硬盘数据来自 sysinfo.json，内存数据来自 dmidecode.log 和 lsblk.log。</p>
       </div>
       <dl class="report-meta">
         <div><dt>诊断包</dt><dd title="${escapeHtml(metadata.packageName)}">${escapeHtml(metadata.packageName)}</dd></div>
@@ -113,6 +117,8 @@ export function renderSysinfoReport(model: SysinfoReportModel, metadata: Sysinfo
           <div class="disk-list">${pool.disks.map((disk) => renderDisk(disk, maxDiskSize)).join('')}</div>
         </section>`).join('')}
     </section>
+
+    ${renderBlockDevices(model)}
 
     <section class="report-section" aria-labelledby="network-heading">
       <div class="section-heading"><div><h2 id="network-heading">网络接口</h2><p>地址和硬件标识按原值展示</p></div><span class="count">${model.networks.length} 个接口</span></div>
@@ -161,6 +167,20 @@ function renderSmartTable(attributes: SysinfoSmartAttribute[]): string {
 
 function renderMemoryTable(modules: MemoryModule[]): string {
   return `<div class="table-scroll"><table class="memory-table"><thead><tr><th>内存</th><th>容量</th><th>品牌</th><th>型号</th></tr></thead><tbody>${modules.map((module, index) => `<tr><td class="strong">内存 ${index + 1}</td><td class="mono">${value(module.size)}</td><td>${value(module.manufacturer)}</td><td class="mono">${value(module.model)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function renderBlockDevices(model: SysinfoReportModel): string {
+  const emptyMessage = model.blockDevicesRaw ? 'lsblk.log 中未找到 sysinfo.json 已识别硬盘的存储链路' : '未提供 lsblk.log';
+  const rows = model.blockDevices.map((row) => `<tr data-depth="${row.depth}"><td><span class="block-device-name" style="--depth:${Math.min(row.depth, 20)}"><span class="block-device-branch" aria-hidden="true">${row.depth > 0 ? '└─' : ''}</span>${value(row.name)}</span></td><td class="mono">${value(row.majorMinor)}</td><td>${value(blockFlag(row.removable))}</td><td class="mono">${value(row.size)}</td><td>${value(blockFlag(row.readOnly))}</td><td class="mono">${value(row.type)}</td><td class="mono multi-value">${values(row.mountpoints)}</td></tr>`).join('');
+  const table = model.blockDevices.length === 0 ? emptyState(emptyMessage) : `<div class="table-scroll"><table class="block-devices-table"><thead><tr><th>设备</th><th>主次设备号</th><th>可移动</th><th>容量</th><th>只读</th><th>类型</th><th>挂载点</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const raw = model.blockDevicesRaw ? `<details class="block-devices-raw"><summary><span><strong>完整 lsblk.log 原始数据</strong><small>包含未纳入存储链路的系统设备，展开后可逐项核对</small></span><span class="disclosure">展开</span></summary><pre>${escapeHtml(model.blockDevicesRaw)}</pre></details>` : '';
+  return `<section class="report-section block-devices-section" aria-labelledby="block-devices-heading"><div class="section-heading"><div><h2 id="block-devices-heading">块设备存储链路</h2><p>按 sysinfo.json 已识别硬盘保留分区、RAID、LVM 和挂载点后代</p></div><span class="count">${model.blockDevices.length} 个设备</span></div>${table}${raw}</section>`;
+}
+
+function blockFlag(raw: string): string {
+  if (raw === '0') return '否';
+  if (raw === '1') return '是';
+  return raw;
 }
 
 function overviewItem(label: string, content: string, mono = false, copyLabel?: string): string {
@@ -360,6 +380,16 @@ tbody tr:last-child td { border-bottom:0; }
 .missing, .empty-inline { color:#7b8795; font-weight:400; }
 .empty-state { margin:0; padding:24px 18px; color:#6e7b89; }
 .empty-inline { margin:0; }
+.block-devices-table { min-width:780px; }
+.block-device-name { display:inline-flex; align-items:center; min-width:180px; padding-left:calc(var(--depth) * 20px); white-space:nowrap; }
+.block-device-branch { width:20px; flex:none; color:#7890a3; }
+.block-devices-raw { border-top:1px solid var(--line); }
+.block-devices-raw summary { cursor:pointer; min-height:58px; padding:12px 18px; display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.block-devices-raw summary span:first-child { display:grid; gap:4px; }
+.block-devices-raw summary strong { font-size:15px; }
+.block-devices-raw summary small { color:var(--muted); font-weight:400; }
+.block-devices-raw[open] summary { border-bottom:1px solid var(--line); }
+.block-devices-raw pre { margin:0; padding:18px; background:#101b27; color:#dce8f2; font:12px/1.6 var(--mono); white-space:pre; overflow:auto; max-height:50vh; }
 .raw-section details > summary { cursor:pointer; min-height:68px; padding:14px 18px; display:flex; align-items:center; justify-content:space-between; gap:20px; }
 .raw-section summary span:first-child { display:grid; gap:4px; }
 .raw-section summary strong { font-size:18px; }

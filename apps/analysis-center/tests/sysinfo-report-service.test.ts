@@ -60,6 +60,53 @@ describe('完整 sysinfo 报告服务', () => {
     expect(html).not.toContain('B vendor');
   });
 
+  it('发现嵌套 lsblk.log 并在完整报告中生成存储链路表格', async () => {
+    const root = await createRoot();
+    await mkdir(join(root, 'cmd'), { recursive: true });
+    await writeFile(join(root, 'sysinfo.json'), JSON.stringify({ disk: { devices: [{ disk_info: { dev_name: '/dev/sda', name: 'sda' } }] } }), 'utf8');
+    await writeFile(join(root, 'cmd', 'lsblk.log'), lsblk('sda'), 'utf8');
+
+    const reportPath = await new SysinfoReportService().getReportPath({ extractPath: root, displayName: 'lsblk.tgz' });
+    const html = await readFile(reportPath, 'utf8');
+    const table = html.match(/<table class="block-devices-table">([\s\S]*?)<\/table>/)?.[1] ?? '';
+
+    expect(table).toContain('sda');
+    expect(table).toContain('sda1');
+    expect(html).toContain('lsblk.tgz');
+  });
+
+  it('lsblk.log 更新后使完整报告缓存失效', async () => {
+    const root = await createRoot();
+    const lsblkPath = join(root, 'lsblk.log');
+    const service = new SysinfoReportService();
+    await writeFile(join(root, 'sysinfo.json'), JSON.stringify({ disk: { devices: [{ disk_info: { dev_name: '/dev/sda', name: 'sda' } }] } }), 'utf8');
+    await writeFile(lsblkPath, lsblk('sda', '/old'), 'utf8');
+    const reportPath = await service.getReportPath({ extractPath: root, displayName: 'cache-lsblk.tgz' });
+
+    const newer = new Date((await stat(reportPath)).mtimeMs + 2_000);
+    await writeFile(lsblkPath, lsblk('sda', '/updated'), 'utf8');
+    await utimes(lsblkPath, newer, newer);
+    await service.getReportPath({ extractPath: root, displayName: 'cache-lsblk.tgz' });
+
+    await expect(readFile(reportPath, 'utf8')).resolves.toContain('/updated');
+    await expect(readFile(reportPath, 'utf8')).resolves.not.toContain('/old');
+  });
+
+  it('旧格式完整报告即使时间较新也会重新生成以包含 lsblk 区域', async () => {
+    const root = await createRoot();
+    const reportPath = join(root, 'sysinfo-report.html');
+    await writeFile(join(root, 'sysinfo.json'), JSON.stringify({ disk: { devices: [{ disk_info: { dev_name: '/dev/sda', name: 'sda' } }] } }), 'utf8');
+    await writeFile(join(root, 'lsblk.log'), lsblk('sda'), 'utf8');
+    await writeFile(reportPath, '<html>old report</html>', 'utf8');
+    const future = new Date(Date.now() + 60_000);
+    await utimes(reportPath, future, future);
+
+    await new SysinfoReportService().getReportPath({ extractPath: root, displayName: 'old-cache.tgz' });
+
+    await expect(readFile(reportPath, 'utf8')).resolves.toContain('块设备存储链路');
+    await expect(readFile(reportPath, 'utf8')).resolves.not.toContain('old report');
+  });
+
   it('dmidecode 文件更新后使报告缓存失效', async () => {
     const root = await createRoot();
     const dmiPath = join(root, 'dmidecode.log');
@@ -142,4 +189,8 @@ async function createRoot(): Promise<string> {
 
 function dmiMemory(size: string, manufacturer: string, model: string): string {
   return `Memory Device\n\tSize: ${size}\n\tManufacturer: ${manufacturer}\n\tPart Number: ${model}\n`;
+}
+
+function lsblk(device: string, mountpoint = '/volume1'): string {
+  return `NAME                                     MAJ:MIN RM   SIZE RO TYPE  MOUNTPOINTS\n${device}                                        8:0    0   3.6T  0 disk  \n└─${device}1                                     8:1    0   3.6T  0 part  ${mountpoint}\n`;
 }
