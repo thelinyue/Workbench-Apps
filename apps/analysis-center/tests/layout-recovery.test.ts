@@ -16,6 +16,12 @@ describe('分析中心 V1 工作区', () => {
     expect(styleSource).toContain('.analysis-task-row {');
   });
 
+  it('最小宽度下监控操作行固定高度并保持三个按钮对齐', () => {
+    expect(styleSource).toContain('.monitor-actions { display: flex; height: 34px; min-height: 34px;');
+    expect(styleSource).toContain('.monitor-actions > button { height: 34px; min-height: 34px;');
+    expect(styleSource).toContain('.monitor-actions { grid-column: 2 / -1; justify-self: end; justify-content: flex-end; }');
+  });
+
   it('首页状态条与设置弹窗明确区分新增自动分析和手动扫描存量', () => {
     expect(viewSource).toContain('createSettingsActions');
     expect(viewSource).toContain('settingsActions.chooseDirectory()');

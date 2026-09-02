@@ -50,7 +50,8 @@ h1, h2, h3, p { margin: 0; }
 .monitor-state strong, .monitor-directory strong { overflow: hidden; color: #1f324d; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .monitor-state span, .monitor-directory span { overflow: hidden; color: #74839a; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .monitor-state { min-width: 108px; }
-.monitor-actions { display: flex; align-items: center; gap: 7px; }
+.monitor-actions { display: flex; height: 34px; min-height: 34px; align-items: center; gap: 7px; }
+.monitor-actions > button { height: 34px; min-height: 34px; }
 .monitor-actions > button:not(.icon-button) { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .monitor-warning { margin-top: 8px; padding: 8px 11px; border: 1px solid #f1d4a9; border-radius: 6px; color: #9a5d19; background: #fff9ef; }
 .workspace-dropzone {
@@ -269,7 +270,7 @@ h1, h2, h3, p { margin: 0; }
 
 @media (max-width: 900px) {
   .monitor-statusbar { grid-template-columns: 20px auto minmax(180px, 1fr); }
-  .monitor-actions { grid-column: 2 / -1; justify-content: flex-end; }
+  .monitor-actions { grid-column: 2 / -1; justify-self: end; justify-content: flex-end; }
   .running-summary { grid-template-columns: 22px minmax(160px, 1fr) minmax(140px, 35%) auto; }
   .stage-progress { gap: 5px; }
 }
