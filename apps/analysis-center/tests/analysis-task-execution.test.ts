@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import * as tar from 'tar';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AnalysisResult } from '../backend/lib/analysis-v1/pipeline';
+import type { AnalysisRulePackage } from '../backend/lib/services/analysis-rules-service';
 import { PipelineProfiler, type PipelineProfile } from '../backend/lib/analysis-v1/pipeline-profiler';
 import { WorkspaceRepository } from '../backend/lib/data/workspace-repository';
 import type { DiagnosticPackage } from '../backend/lib/domain/diagnostic-package';
@@ -14,6 +15,30 @@ const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
 
 describe('分析任务单线程执行', () => {
+  it('在任务开始时冻结规则快照并传递给 Worker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'analysis-task-rule-snapshot-'));
+    directories.push(root);
+    const repository = new WorkspaceRepository(join(root, 'analysis-center.db'));
+    repository.upsertPackage(packageRecord('package-rules', await createArchive(root, 'package-rules')));
+    const worker = new FakeAnalysisWorker();
+    let workerData: Record<string, unknown> | undefined;
+    const rulePackage = runtimeRulePackage('1.0.1');
+    const service = new AnalysisTaskService(repository, {
+      getRulePackage: async () => rulePackage,
+      createWorker: (_url, options) => { workerData = options.workerData; return worker; }
+    });
+
+    try {
+      await service.enqueue('package-rules');
+      await vi.waitFor(() => expect(workerData).toMatchObject({ rulePackage: { version: '1.0.1' } }));
+      worker.emit('message', { type: 'completed', succeeded: true, browserPath: join(root, 'result.html'), analysisResult: successfulResult });
+      await vi.waitFor(() => expect(repository.getPackage('package-rules')?.status).toBe('report-ready'));
+    } finally {
+      await service.close();
+      repository.close();
+    }
+  });
+
   it('仅在显式开启时回传完成持久化后的 Pipeline profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'analysis-task-profile-'));
     directories.push(root);
@@ -273,3 +298,14 @@ const successfulResult: AnalysisResult = {
     missingData: []
   }
 };
+
+function runtimeRulePackage(version: string): AnalysisRulePackage {
+  return {
+    schemaVersion: 1,
+    ruleSetId: 'analysis-center-runtime-rules',
+    version,
+    minimumRuntimeVersion: '1.0.0',
+    formatRules: { tgz: { files: [] }, zip: { files: [] } },
+    v1: { eventRules: [], findingRules: [], diagnosisRules: [], recommendations: [] }
+  };
+}

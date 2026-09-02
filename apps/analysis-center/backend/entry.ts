@@ -8,6 +8,9 @@ import { MonitorDirectoryService } from './lib/services/monitor-directory-servic
 import { LifecycleDeletionService } from './lib/services/lifecycle-deletion-service';
 import { createAnalysisBackendShutdown } from './lib/services/analysis-backend-shutdown';
 import { SysinfoReportService } from './lib/services/sysinfo-report-service';
+import { AnalysisRulesService } from './lib/services/analysis-rules-service';
+import { builtInAnalysisRulePackage } from './lib/analysis-rules/built-in-analysis-rule-package';
+import trustedKeys from './config/analysis-rules-trusted-keys.json';
 import { WorkspaceRepository } from './lib/data/workspace-repository';
 import type { AnalyzerRuleCatalog } from './lib/analysis/log-analyzer';
 import type { AppBackendContext } from '../../../sdk/app-contract';
@@ -28,12 +31,19 @@ interface PendingDeletion {
  *
  * 工作台只负责启动这个 Worker 和转发 Host API；诊断包、任务、规则执行结果和设置全部使用
  * dataDirectory 下的新数据库，不读取宿主原有数据库，从数据层面保证应用独立升级。
- * 分析引擎、规则和报告模板会在构建时随 backend 一起打包进 ZIP。
+ * 分析引擎和内置规则快照随 backend 打包；后续规则仅经此应用直连官方目录、验签后保存到
+ * dataDirectory，更新不会经过 Workbench 主进程，也不会改写正在执行或已完成任务的规则版本。
  */
 export function createAppBackend(context: AppBackendContext): AppBackend {
   const repository = new WorkspaceRepository(join(context.dataDirectory, 'analysis-center.db'));
   const analysis = new AnalysisCenterService(repository);
-  const tasks = new AnalysisTaskService(repository, { notify: (notification) => context.showNotification(notification) });
+  const rules = new AnalysisRulesService({
+    directory: join(context.dataDirectory, 'rules'),
+    seed: builtInAnalysisRulePackage,
+    catalogUrl: 'https://raw.githubusercontent.com/thelinyue/Workbench-Apps/main/rules/analysis-center/catalog.json',
+    trustedKeys
+  });
+  const tasks = new AnalysisTaskService(repository, { notify: (notification) => context.showNotification(notification), getRulePackage: () => rules.getSnapshot() });
   const monitor = new MonitorDirectoryService(repository, analysis, tasks);
   const deletion = new LifecycleDeletionService(repository);
   const sysinfoReports = new SysinfoReportService();
@@ -142,6 +152,8 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           return undefined;
         }
         case 'settings.get': return repository.getMonitorSettings();
+        case 'rules.get-state': return rules.getState();
+        case 'rules.update': return rules.update();
         case 'monitor.status': return monitor.getStatus();
         case 'settings.save': {
           const value = readRecord(payload);

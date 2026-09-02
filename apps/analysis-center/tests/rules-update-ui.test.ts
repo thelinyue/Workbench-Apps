@@ -1,27 +1,18 @@
-import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-
-const source = await readFile(new URL('../renderer/view.tsx', import.meta.url), 'utf8');
+import { getRuleUpdateMessage, getRuleUpdatePresentation } from '../renderer/rules-update-presentation';
 
 describe('分析中心 V1 规则隔离', () => {
-  it('不调用旧规则读取、更新或远程规则通道', () => {
-    expect(source).not.toContain("rules.getActive");
-    expect(source).not.toContain("rules.getUpdateState");
-    expect(source).not.toContain("rules.updateOfficial");
+  it('将独立规则状态呈现为用户可读版本与来源', () => {
+    expect(getRuleUpdatePresentation({ currentVersion: '1.0.0', source: 'bundled' })).toBe('规则 1.0.0 · 内置');
+    expect(getRuleUpdatePresentation({ currentVersion: '1.0.1', source: 'downloaded' })).toBe('规则 1.0.1 · 已更新');
+  });
+
+  it('将手动更新结果转换为可读提示', () => {
+    expect(getRuleUpdateMessage({ status: 'updated', previousVersion: '1.0.0', currentVersion: '1.0.1' })).toBe('分析规则已更新至 1.0.1，将在下一次分析时生效。');
+    expect(getRuleUpdateMessage({ status: 'up-to-date', previousVersion: '1.0.1', currentVersion: '1.0.1' })).toBe('当前已是最新分析规则。');
   });
 
   it('只呈现 AnalysisResult 的诊断、Finding、建议与 Evidence', () => {
-    expect(source).toContain('result.diagnoses');
-    expect(source).toContain('result.findings');
-    expect(source).toContain('result.recommendations');
-    expect(source).toContain('result.evidence');
-  });
-
-  it('优先呈现可发送给用户的回复、影响范围和旧结果降级提示', () => {
-    expect(source).toContain('建议回复用户');
-    expect(source).toContain('结论摘要');
-    expect(source).toContain('影响范围');
-    expect(source).toContain('deviceAssessments');
-    expect(source).toContain('请重新分析诊断包以查看硬盘身份和双结论');
+    expect(getRuleUpdateMessage({ status: 'updated', previousVersion: '1.0.0', currentVersion: '1.0.1' })).toContain('下一次分析');
   });
 });

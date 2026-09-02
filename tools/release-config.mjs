@@ -15,3 +15,7 @@ export function getReleaseAssetName(appId, version) {
 export function getReleaseUrl(appId, version) {
   return `${RELEASE_BASE_URL}/${getReleaseAssetName(appId, version)}`;
 }
+
+export function getAnalysisRulesReleaseUrl(version) {
+  return `${RELEASE_BASE_URL}/analysis-center-rules-v${version}.json`;
+}

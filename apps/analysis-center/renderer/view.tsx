@@ -1,4 +1,4 @@
-import { ArrowUpDown, Check, ChevronDown, ChevronLeft, CircleAlert, CircleCheck, Clock3, Copy, ExternalLink, FileJson2, FilePlus2, FolderOpen, ListChecks, ListFilter, LoaderCircle, MoreHorizontal, PanelRightOpen, Play, Save, ScanSearch, Settings, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
+import { ArrowUpDown, Check, ChevronDown, ChevronLeft, CircleAlert, CircleCheck, Clock3, CloudDownload, Copy, ExternalLink, FileJson2, FilePlus2, FolderOpen, ListChecks, ListFilter, LoaderCircle, MoreHorizontal, PanelRightOpen, Play, Save, ScanSearch, Settings, ShieldAlert, Trash2, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildResultPresentation } from '../shared/result-presentation';
 import { createEvidenceDrawerController, getEvidencePresentation, type EvidenceDrawerController, type EvidenceDrawerState } from './evidence-drawer';
@@ -9,6 +9,7 @@ import { createSettingsActions, type MonitorSettings } from './settings-actions'
 import { formatElapsed, getAnalysisRuntimePresentation, getQueuePosition, isOutsideOverflowMenu, type AnalysisRuntimeTimingsView } from './task-presentation';
 import { startDialogLifecycle } from './dialog-lifecycle';
 import { openSysinfoReport } from './sysinfo-report-action';
+import { getRuleUpdateMessage, getRuleUpdatePresentation, type RuleUpdateResult, type RuleUpdateState } from './rules-update-presentation';
 import { formatFileSize, getAnalysisStageItems, getAnalysisTaskFilterCounts, getAnalysisTaskItems, getNextRecentPackageSelection, getNotificationActivation, getPackageDeletionConfirmation, getPackageRecordDeletionConfirmation, getPackageTone, getRecentAnalysisPackageIds, getRecentAnalysisPresentation, shouldShowSysinfoReport, type AnalysisTaskFilter, type AnalysisTaskSort, type AnalysisTaskStage } from './workspace-presentation';
 
 interface PackageItem { id: string; displayName: string; sourcePath: string; sourceSizeBytes?: number; detectedAt: string; lastAnalysisAt?: string; status: 'pending' | 'queued' | 'running' | 'report-ready' | 'failed' | 'cancelled'; reportPath?: string; }
@@ -43,6 +44,8 @@ export function AnalysisCenterApp() {
   const [settingsDraft, setSettingsDraft] = useState<MonitorSettings>({ enabled: false, autoAnalyzeEnabled: true, scanIntervalSeconds: 10 });
   const [settingsError, setSettingsError] = useState('');
   const [monitorStatus, setMonitorStatus] = useState<{ state: string; warning?: string }>({ state: 'disabled' });
+  const [ruleState, setRuleState] = useState<RuleUpdateState>({ currentVersion: '加载中', source: 'bundled' });
+  const [updatingRules, setUpdatingRules] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [scanningExisting, setScanningExisting] = useState(false);
   const [sysinfoReportLoading, setSysinfoReportLoading] = useState(false);
@@ -66,10 +69,10 @@ export function AnalysisCenterApp() {
 
   const load = useMemo(() => createLatestLoad(
     () => Promise.all([
-      host.invoke<PackageItem[]>('packages.list'), host.invoke<TaskItem[]>('tasks.list'), host.invoke<MonitorSettings>('settings.get'), host.invoke<{ state: string; warning?: string }>('monitor.status'), host.invoke<Array<{ packageId: string; result: ResultSummary }>>('results.recent')
+      host.invoke<PackageItem[]>('packages.list'), host.invoke<TaskItem[]>('tasks.list'), host.invoke<MonitorSettings>('settings.get'), host.invoke<{ state: string; warning?: string }>('monitor.status'), host.invoke<Array<{ packageId: string; result: ResultSummary }>>('results.recent'), host.invoke<RuleUpdateState>('rules.get-state')
     ]),
-    ([nextPackages, nextTasks, nextMonitor, nextMonitorStatus, nextRecentResults]) => {
-      setPackages(nextPackages); setTasks(nextTasks); setMonitor(nextMonitor); setMonitorStatus(nextMonitorStatus); setRecentResults(nextRecentResults);
+    ([nextPackages, nextTasks, nextMonitor, nextMonitorStatus, nextRecentResults, nextRuleState]) => {
+      setPackages(nextPackages); setTasks(nextTasks); setMonitor(nextMonitor); setMonitorStatus(nextMonitorStatus); setRecentResults(nextRecentResults); setRuleState(nextRuleState);
     }
   ), []);
 
@@ -138,6 +141,7 @@ export function AnalysisCenterApp() {
   const selectMonitorDirectory = async () => settingsActions.chooseDirectory();
   const saveSettings = async () => settingsActions.save();
   const scanExisting = async () => { setScanningExisting(true); setMessage(''); try { await host.invoke('packages.scan'); await load(); } catch (error) { showError(error); } finally { setScanningExisting(false); } };
+  const updateRules = async () => { if (updatingRules) return; setUpdatingRules(true); setMessage(''); try { const result = await host.invoke<RuleUpdateResult>('rules.update'); setRuleState({ currentVersion: result.currentVersion, source: 'downloaded' }); setMessage(getRuleUpdateMessage(result)); } catch (error) { showError(error); } finally { setUpdatingRules(false); } };
   const openMonitorDirectory = async () => { if (monitor.directory) await host.invoke('host.openPath', { path: monitor.directory }); };
   const openBrowser = async () => { const item = packages.find((value) => value.id === resultPackageId); if (item?.reportPath) await host.invoke('host.openPath', { path: item.reportPath }); };
   const openCompleteSysinfo = async () => { if (!resultPackageId || sysinfoReportLoading) return; setSysinfoReportLoading(true); try { await openSysinfoReport(host, resultPackageId); } catch (error) { showError(error); } finally { setSysinfoReportLoading(false); } };
@@ -162,7 +166,7 @@ export function AnalysisCenterApp() {
       <span className={`monitor-indicator state-${monitorStatus.state}`} aria-hidden="true" />
       <div className="monitor-state"><strong>{monitorStateLabel}</strong><span>{monitor.autoAnalyzeEnabled ? '自动分析开启' : '自动分析关闭'}</span></div>
       <div className="monitor-directory"><strong title={monitor.directory}>{monitor.directory ?? '尚未选择监控目录'}</strong><span>{monitorDescription}</span></div>
-      <div className="monitor-actions"><button type="button" disabled={!monitor.directory || scanningExisting} onClick={() => void scanExisting()}><ScanSearch size={16} aria-hidden="true" />{scanningExisting ? '扫描中' : '扫描存量'}</button><button type="button" disabled={!monitor.directory} onClick={() => void openMonitorDirectory()}><FolderOpen size={16} aria-hidden="true" />打开目录</button><button type="button" className="icon-button" title="打开分析中心设置" aria-label="打开分析中心设置" onClick={(event) => openSettings(event.currentTarget)}><Settings size={17} aria-hidden="true" /></button></div>
+      <div className="monitor-actions"><span className="rules-state" title={getRuleUpdatePresentation(ruleState)}>{getRuleUpdatePresentation(ruleState)}</span><button type="button" disabled={updatingRules} onClick={() => void updateRules()}><CloudDownload size={16} aria-hidden="true" />{updatingRules ? '更新中' : '更新规则'}</button><button type="button" disabled={!monitor.directory || scanningExisting} onClick={() => void scanExisting()}><ScanSearch size={16} aria-hidden="true" />{scanningExisting ? '扫描中' : '扫描存量'}</button><button type="button" disabled={!monitor.directory} onClick={() => void openMonitorDirectory()}><FolderOpen size={16} aria-hidden="true" />打开目录</button><button type="button" className="icon-button" title="打开分析中心设置" aria-label="打开分析中心设置" onClick={(event) => openSettings(event.currentTarget)}><Settings size={17} aria-hidden="true" /></button></div>
     </section>
     {monitorStatus.warning && <div className="monitor-warning" role="alert">{monitorStatus.warning}</div>}
     {message && <div className="message" role="alert">{message}</div>}

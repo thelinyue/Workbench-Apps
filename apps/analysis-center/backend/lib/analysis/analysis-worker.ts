@@ -1,10 +1,12 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { createAnalysisRuntimeTimings, runV1ArchiveAnalysis } from './archive-analysis';
 import { PipelineProfiler } from '../analysis-v1/pipeline-profiler';
+import type { AnalysisRulePackage } from '../services/analysis-rules-service';
 
 interface AnalysisWorkerInput {
   sourcePath: string;
   extractDirectory: string;
+  rulePackage?: AnalysisRulePackage;
   performanceProfiling?: boolean;
 }
 
@@ -20,7 +22,7 @@ void (async () => {
   try {
     const input = workerData as AnalysisWorkerInput;
     const profiler = input.performanceProfiling ? new PipelineProfiler() : undefined;
-    const result = await runV1ArchiveAnalysis({ sourcePath: input.sourcePath, extractDirectory: input.extractDirectory, profiler, runtimeTimings, onProgress: (progress) => parentPort?.postMessage({ type: 'progress', ...progress }) });
+    const result = await runV1ArchiveAnalysis({ sourcePath: input.sourcePath, extractDirectory: input.extractDirectory, rulePackage: input.rulePackage, profiler, runtimeTimings, onProgress: (progress) => parentPort?.postMessage({ type: 'progress', ...progress }) });
     parentPort?.postMessage({ type: 'completed', succeeded: true, browserPath: result.browserPath, analysisResult: result.result, runtimeTimings, ...(result.performanceProfile ? { performanceProfile: result.performanceProfile } : {}) });
   } catch (error) {
     parentPort?.postMessage({ type: 'completed', succeeded: false, errorMessage: error instanceof Error ? error.message : String(error), runtimeTimings });

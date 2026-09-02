@@ -8,6 +8,7 @@ import yazl from 'yazl';
 import { afterEach, expect, it } from 'vitest';
 import { runV1ArchiveAnalysis } from '../backend/lib/analysis/archive-analysis';
 import { PipelineProfiler } from '../backend/lib/analysis-v1/pipeline-profiler';
+import type { AnalysisRulePackage } from '../backend/lib/services/analysis-rules-service';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
@@ -99,6 +100,25 @@ it('TGZ 没有明确硬盘故障时不把规则命中作为主诊断，但保留
   ]));
   expect(result.result.evidence).toEqual(expect.arrayContaining([
     expect.objectContaining({ eventType: 'format-rule.tgz.syslog', rawMessage: '2026-08-26T03:12:01+08:00 UPS ups0@localhost on battery' })
+  ]));
+});
+
+it('归档分析使用传入的统一规则快照，而不是构建时格式规则', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-runtime-rules-'));
+  directories.push(root);
+  await writeFile(join(root, 'custom.log'), 'CUSTOM_RULE_HIT');
+  const archivePath = join(root, 'runtime-rules.tgz');
+  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['custom.log']);
+
+  const output = await runV1ArchiveAnalysis({
+    sourcePath: archivePath,
+    extractDirectory: join(root, 'extracted'),
+    rulePackage: runtimeRulePackage()
+  });
+
+  expect(output.result.metadata.rulePackVersion).toBe('tgz@1.0.1');
+  expect(output.result.findings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ title: '在线规则命中' })
   ]));
 });
 
@@ -374,6 +394,20 @@ async function createZip(archivePath: string, files: Array<{ name: string; conte
     for (const file of files) zip.addBuffer(Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content), file.name, file.mode === undefined ? undefined : { mode: file.mode });
     zip.end();
   });
+}
+
+function runtimeRulePackage(): AnalysisRulePackage {
+  return {
+    schemaVersion: 1,
+    ruleSetId: 'analysis-center-runtime-rules',
+    version: '1.0.1',
+    minimumRuntimeVersion: '1.0.0',
+    formatRules: {
+      tgz: { files: [{ name: 'custom', category: '在线规则', file_patterns: ['^custom\\.log$'], keywords: [{ term: 'CUSTOM_RULE_HIT', result: '在线规则命中' }] }] },
+      zip: { files: [] }
+    },
+    v1: { eventRules: [], findingRules: [], diagnosisRules: [], recommendations: [] }
+  };
 }
 
 function normalizeRuntimeFields(result: Awaited<ReturnType<typeof runV1ArchiveAnalysis>>['result']) {

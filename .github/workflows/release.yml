@@ -7,6 +7,7 @@ on:
       - 'lvm-uncache-tool-v*'
       - 'terminal-v*'
       - 'log-rule-editor-v*'
+      - 'analysis-rules-v*'
 
 concurrency:
   group: workbench-apps-release
@@ -17,6 +18,7 @@ permissions:
 
 jobs:
   release:
+    if: ${{ !startsWith(github.ref_name, 'analysis-rules-v') }}
     runs-on: ubuntu-latest
     steps:
       - name: 检出源码
@@ -69,3 +71,44 @@ jobs:
           git add catalog.json
           git diff --cached --quiet || git commit -m "chore: publish $app_id $version catalog entry"
           git push origin HEAD:main
+
+  publish-analysis-rules:
+    if: ${{ startsWith(github.ref_name, 'analysis-rules-v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 构建并发布分析规则
+        env:
+          HEPHAESTUS_APP_SIGNING_PRIVATE_KEY: ${{ secrets.WORKBENCH_APPS_SIGNING_PRIVATE_KEY }}
+          HEPHAESTUS_APP_SIGNING_KEY_ID: ${{ secrets.WORKBENCH_APPS_SIGNING_KEY_ID }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#analysis-rules-v}"
+          output_dir="${RUNNER_TEMP}/analysis-rules"
+          asset_name="analysis-center-rules-v${version}.json"
+          node tools/build-analysis-rules.mjs "$version" "$output_dir"
+          if ! gh release view workbench-apps --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create workbench-apps --target "$GITHUB_SHA" --title "Workbench Apps" --notes "Workbench 应用统一发布页。" --repo "$GITHUB_REPOSITORY"
+          fi
+          gh release upload workbench-apps "$output_dir/$asset_name" --clobber --repo "$GITHUB_REPOSITORY"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions@users.noreply.github.com
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B analysis-rules-catalog origin/main
+            mkdir -p rules/analysis-center
+            cp "$output_dir/catalog.json" rules/analysis-center/catalog.json
+            git add rules/analysis-center/catalog.json
+            git diff --cached --quiet || git commit -m "chore: publish analysis rules $version"
+            if git push origin HEAD:main; then exit 0; fi
+            if [ "$attempt" = 3 ]; then echo "规则目录提交失败。" >&2; exit 1; fi
+          done

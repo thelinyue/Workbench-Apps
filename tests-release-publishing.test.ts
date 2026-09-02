@@ -158,5 +158,11 @@ describe('统一应用发布配置', () => {
     expect(workflow).toContain('metadata_path="apps/$app_id/dist/$metadata_asset_name"');
     expect(workflow).toContain('cp "$release_path" "$metadata_path"');
     expect(workflow).toContain('"$metadata_path" --clobber');
+    expect(workflow).toContain("'analysis-rules-v*'");
+    expect(workflow).toContain('publish-analysis-rules');
+    expect(workflow).toContain('tools/build-analysis-rules.mjs');
+    expect(workflow).toContain('rules/analysis-center/catalog.json');
+    expect(workflow).toContain('git fetch origin main');
+    expect(workflow).toContain('git checkout -B analysis-rules-catalog origin/main');
   });
 });

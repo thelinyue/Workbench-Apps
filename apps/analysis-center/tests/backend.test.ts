@@ -8,6 +8,18 @@ const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
 
 describe('分析中心 backend Worker', () => {
+  it('从应用私有目录读取内置规则状态，不调用 Workbench 规则服务', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-rules-state-'));
+    directories.push(dataDirectory);
+    const backend = createAppBackend({ appId: 'analysis-center', dataDirectory, manifest: {}, emit: () => undefined, showNotification: () => undefined });
+
+    try {
+      await expect(backend.invoke('rules.get-state', null)).resolves.toEqual({ currentVersion: '1.0.0', source: 'bundled' });
+    } finally {
+      await backend.close();
+    }
+  });
+
   it('使用独立数据库并通过 Host RPC 保存带扫描间隔的设置', async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-backend-'));
     directories.push(dataDirectory);

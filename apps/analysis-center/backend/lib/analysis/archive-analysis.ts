@@ -23,6 +23,7 @@ import { analyzeV1Sources, type AnalysisResult as V1AnalysisResult } from '../an
 import { classifyV1Source } from '../analysis-v1/source-classifier';
 import { type PipelineProfile, PipelineProfiler } from '../analysis-v1/pipeline-profiler';
 import { builtInAnalyzerRules } from './built-in-rules';
+import { toAnalyzerRuleCatalog, type AnalysisRulePackage } from '../services/analysis-rules-service';
 import type { AnalysisTaskStage } from '../data/workspace-repository';
 import { renderAnalysisReport } from '../reports/analysis-report';
 
@@ -78,11 +79,12 @@ export function createAnalysisRuntimeTimings(): AnalysisRuntimeTimings {
  * 活动归档入口只执行当前归档格式对应的关键词规则，再将命中结果适配成 V1 AnalysisResult。
  * 公共 Event Rule 和旧的全量报告入口都不参与这里的规则选择，确保两种格式严格隔离。
  */
-export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest, 'sourcePath' | 'extractDirectory' | 'onProgress'> & { profiler?: PipelineProfiler; runtimeTimings?: AnalysisRuntimeTimings }): Promise<V1ArchiveAnalysisResult> {
+export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest, 'sourcePath' | 'extractDirectory' | 'onProgress'> & { rulePackage?: AnalysisRulePackage; profiler?: PipelineProfiler; runtimeTimings?: AnalysisRuntimeTimings }): Promise<V1ArchiveAnalysisResult> {
   const profiler = request.profiler;
   const runtimeTimings = request.runtimeTimings ?? createAnalysisRuntimeTimings();
   const totalStartedAt = performance.now();
   try {
+    const activeRules = request.rulePackage ? toAnalyzerRuleCatalog(request.rulePackage) : builtInAnalyzerRules;
     const recognizeInput = async () => {
       const format = getDiagnosticPackageFormat(request.sourcePath);
       if (!format) throw new Error('仅支持 .tgz、.tgz.temp 或 .zip 格式的诊断包');
@@ -116,7 +118,7 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
     const scan = await measureRuntimeAsync(runtimeTimings, 'sourceReadMs', () => {
       const scanOperation = () => analyzeExtractedDirectoryWithStats(
         request.extractDirectory,
-        builtInAnalyzerRules[archiveFormat],
+        activeRules[archiveFormat],
         ({ processedFiles, totalFiles }) => request.onProgress?.({ progress: 35 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 20), stage: 'parse-system-events', message: `正在读取日志（${processedFiles}/${totalFiles}）` })
       );
       return profiler ? profiler.measureAsync('source.read', scanOperation) : scanOperation();
@@ -128,13 +130,20 @@ export async function runV1ArchiveAnalysis(request: Pick<ArchiveAnalysisRequest,
       : undefined;
     const composed = measureRuntime(runtimeTimings, 'pipelineAnalysisMs', () => {
       const compose = () => {
-        const formatResult = buildV1ResultFromFormatRules({ sourceName: basename(request.sourcePath), format: archiveFormat, ruleVersion: builtInAnalyzerRules[archiveFormat].version, scan });
+        const formatResult = buildV1ResultFromFormatRules({ sourceName: basename(request.sourcePath), format: archiveFormat, ruleVersion: activeRules[archiveFormat].version, scan });
         if (archiveFormat === 'zip') return { result: formatResult, formatResult };
 
         // TGZ 同时保留格式规则和结构化诊断：前者只提供补充证据，后者决定主诊断与设备结论。
         const structuredResult = analyzeV1Sources({
           sourceName: basename(request.sourcePath),
           files: structuredSources ?? {},
+          ...(request.rulePackage ? {
+            eventRules: request.rulePackage.v1.eventRules,
+            findingRules: request.rulePackage.v1.findingRules,
+            diagnosisRules: request.rulePackage.v1.diagnosisRules,
+            recommendations: request.rulePackage.v1.recommendations,
+            rulePackVersion: request.rulePackage.version
+          } : {}),
           profiler,
           onProgress: ({ processedFiles, totalFiles }) => request.onProgress?.({
             progress: 55 + Math.round((processedFiles / Math.max(totalFiles, 1)) * 30),

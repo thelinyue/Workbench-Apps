@@ -1,0 +1,60 @@
+{
+  "findingRules": [
+    { "type": "storage.io_error", "category": "storage", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到块设备 I/O 错误", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "storage.device_unavailable", "category": "storage", "severity": "warning", "confidence": "confirmed", "title": "{{resourcePrefix}}检测到块设备已不可访问", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "storage.sata_link_down", "category": "storage", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到 SATA 链路未连接", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "storage.media_error", "category": "storage", "severity": "warning", "confidence": "confirmed", "title": "{{resourcePrefix}}检测到不可恢复介质错误", "summary": "{{title}}，共 {{occurrenceCount}} 条日志证据。" },
+    { "type": "storage.smart_risk", "category": "storage", "severity": "warning", "confidence": "high", "title": "{{resourcePrefix}}检测到 SMART 介质风险指标", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "storage.device_count_mismatch", "category": "storage", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到 SATA 槽位与块设备数量不一致", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "storage.nvme_timeout", "category": "storage", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到 NVMe 请求超时并被中止", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "storage.io_hung", "category": "storage", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到存储任务长时间阻塞", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "storage.bcache_stall", "category": "storage", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到 bcache 写入路径阻塞线索", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "raid.member_failed", "category": "raid", "severity": "critical", "confidence": "confirmed", "title": "{{resourcePrefix}}RAID 成员已失败", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "raid.degraded", "category": "raid", "severity": "critical", "confidence": "confirmed", "title": "{{resourcePrefix}}RAID 阵列已降级", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "filesystem.error", "category": "filesystem", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到文件系统错误", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "filesystem.read_only", "category": "filesystem", "severity": "warning", "confidence": "confirmed", "title": "{{resourcePrefix}}检测到文件系统被强制切换为只读", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "system.unclean_shutdown", "category": "system", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到异常关机线索", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "system.shutdown_sync_timeout", "category": "system", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到关机同步存储数据超时", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "system.kernel_panic", "category": "system", "severity": "critical", "confidence": "medium", "title": "{{resourcePrefix}}检测到 Kernel Panic", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "system.oom", "category": "system", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到内存耗尽", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "system.oom_killer", "category": "system", "severity": "warning", "confidence": "medium", "title": "{{resourcePrefix}}检测到 OOM Killer", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "system.watchdog", "category": "system", "severity": "critical", "confidence": "medium", "title": "{{resourcePrefix}}检测到 Watchdog 锁死", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "power.ups_on_battery", "category": "power", "severity": "warning", "confidence": "confirmed", "title": "{{resourcePrefix}}UPS 已切换至电池供电", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "power.ups_standby_scheduled", "category": "power", "severity": "info", "confidence": "confirmed", "title": "{{resourcePrefix}}UPS 保护待机定时已设置", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "power.ups_low_battery", "category": "power", "severity": "warning", "confidence": "confirmed", "title": "{{resourcePrefix}}UPS 在电池供电期间进入低电量状态", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "power.ups_already_standby", "category": "power", "severity": "info", "confidence": "confirmed", "title": "{{resourcePrefix}}设备已进入 UPS 保护待机", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "power.ups_online", "category": "power", "severity": "info", "confidence": "confirmed", "title": "{{resourcePrefix}}UPS 已恢复在线供电", "summary": "{{title}}，共 {{occurrenceCount}} 次。" },
+    { "type": "power.ups_service_started", "category": "power", "severity": "info", "confidence": "confirmed", "title": "{{resourcePrefix}}UPS 管理服务已启动", "summary": "{{title}}，共 {{occurrenceCount}} 次。" }
+  ],
+  "diagnosisRules": [
+    {
+      "id": "power.ups_power_loss_suspected",
+      "priority": 0,
+      "sequence": [
+        { "type": "power.ups_on_battery" },
+        { "type": "power.ups_standby_scheduled", "noInterveningTypes": ["power.ups_online", "power.ups_service_started"] },
+        { "type": "power.ups_low_battery", "noInterveningTypes": ["power.ups_online", "power.ups_service_started"] },
+        { "type": "power.ups_already_standby", "noInterveningTypes": ["power.ups_online", "power.ups_service_started"] },
+        { "type": "system.unclean_shutdown", "noInterveningTypes": ["power.ups_online", "power.ups_service_started"] }
+      ],
+      "category": "power",
+      "severity": "warning",
+      "confidence": "high",
+      "title": "UPS 低电量后供电中断",
+      "summary": "UPS 在电池供电期间按策略进入保护待机，随后报告低电量；下一次启动出现异常中断恢复痕迹，与 UPS 电量耗尽后的供电中断高度一致。",
+      "userConclusion": "您好，经分析诊断日志，UPS 在停电期间切换至电池供电，系统按设置进入保护待机，随后 UPS 进入低电量状态。下一次启动日志同时出现上次未正常关闭的恢复痕迹。综合判断，本次异常关机与停电持续时间较长、UPS 电量耗尽后供电中断高度一致。建议检查 UPS 电池健康、实际带载续航、负载功率和低电量保护策略。",
+      "engineerConclusion": "UPS 事件依次记录电池供电、设置保护待机、低电量和已待机，且在恢复在线或 UPS 服务重启前出现异常启动恢复证据。该结论来自跨日志时间关联，不把文件系统恢复痕迹单独视为根因。",
+      "recommendationIds": ["recommendation.ups:system"]
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "recommendation.ups:system",
+      "priority": 1,
+      "type": "inspection",
+      "title": "检查 UPS 电池与带载续航",
+      "reason": "确认 UPS 电池健康、实际负载、可用续航和低电量保护策略。",
+      "risk": "safe"
+    }
+  ]
+}

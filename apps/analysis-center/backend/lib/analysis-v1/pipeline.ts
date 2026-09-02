@@ -2,6 +2,7 @@ import { z } from 'zod';
 import rulePackJson from './event-rule-pack.json';
 import type { PipelineProfiler } from './pipeline-profiler';
 import { classifyV1Source, type V1InputSourceType } from './source-classifier';
+import type { AnalysisDiagnosisRule, AnalysisFindingRule, AnalysisRecommendationRule } from '../services/analysis-rules-service';
 
 export type Severity = 'critical' | 'warning' | 'info';
 export type Confidence = 'confirmed' | 'high' | 'medium' | 'low';
@@ -38,14 +39,14 @@ interface RecommendationRequest { kind: 'smart' | 'raid' | 'ups'; resource: stri
 const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume', 'ups'])), regex: z.string(), type: z.string() })) });
 const rulePack = rulePackSchema.parse(rulePackJson);
 type CompiledEventRule = (typeof rulePack.eventRules)[number] & { pattern: RegExp };
-const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume', 'ups'] as V1InputSourceType[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1InputSourceType, CompiledEventRule[]>;
+type EventRule = (typeof rulePack.eventRules)[number];
 // 内核来源的大多数行是无异常心跳；该集合覆盖当前所有 kernel 规则的触发词，预筛选命中后仍由原规则决定诊断结果。
 const kernelEventCandidate = /\b(?:error|timeout|timed out|reset controller|device not ready|hard resetting|failed|failure|link(?: is)? down|not recognized|not found|medium|uncorrectable|panic|out of memory|oom-kill|killed process|watchdog|uncleanly|orphan inode|recovery complete|corrupt\w*|read-?only|blocked for more than|bch_data_insert_keys)\b/i;
 
 export interface V1Progress { processedFiles: number; totalFiles: number; progress: number; }
 
 /** V1 只分析白名单来源，所有后续规则只消费这里生成的结构化事件。 */
-export function analyzeV1Sources(input: { sourceName: string; files: Record<string, string>; profiler?: PipelineProfiler; onProgress?: (progress: V1Progress) => void }): AnalysisResult {
+export function analyzeV1Sources(input: { sourceName: string; files: Record<string, string>; eventRules?: EventRule[]; findingRules?: AnalysisFindingRule[]; diagnosisRules?: AnalysisDiagnosisRule[]; recommendations?: AnalysisRecommendationRule[]; rulePackVersion?: string; profiler?: PipelineProfiler; onProgress?: (progress: V1Progress) => void }): AnalysisResult {
   const started = new Date();
   const profiler = input.profiler;
   const evidence: Evidence[] = [];
@@ -59,6 +60,7 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   let candidateLines = 0;
   let ruleInvocations = 0;
   let ruleMatches = 0;
+  const rulesBySource = compileRulesBySource(input.eventRules ?? rulePack.eventRules);
   const sources = Object.entries(input.files).filter(([sourceFile]) => classifyV1Source(sourceFile));
   let lastProgress = -1;
   const reportProgress = (processedFiles: number, processedCharacters = 0, currentLength = 0, force = false) => {
@@ -167,17 +169,26 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
     const linked = topology.get(event.resource ?? '') ?? [];
     for (const resource of linked) event.attributes.affected = resource;
   }
-  const findings = profiler
+  const aggregatedFindings = profiler
     ? profiler.measure('finding.aggregate', () => aggregateFindings(events, evidence, topology))
     : aggregateFindings(events, evidence, topology);
+  const findings = applyFindingRules(aggregatedFindings, input.findingRules ?? []);
   const deviceAssessments = buildDeviceAssessments(deviceIdentities, events);
+  // 远程包声明的诊断由受限 DSL 唯一负责，避免同一证据同时产出旧内置结论和在线结论。
+  const externallyDefinedDiagnosisIds = new Set((input.diagnosisRules ?? []).map((rule) => rule.id));
   const diagnosisComposition = profiler
-    ? profiler.measure('diagnosis.compose', () => composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments))
-    : composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments);
-  const diagnoses = diagnosisComposition.diagnoses;
-  const recommendations = profiler
+    ? profiler.measure('diagnosis.compose', () => composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments, externallyDefinedDiagnosisIds))
+    : composeDiagnoses(findings, events, topology, deviceArrays, deviceAssessments, raidAssessments, externallyDefinedDiagnosisIds);
+  const ruleDiagnoses = composeRuleDiagnoses(events, findings, input.diagnosisRules ?? []);
+  const diagnoses = [...ruleDiagnoses, ...diagnosisComposition.diagnoses];
+  const baseRecommendations = profiler
     ? profiler.measure('recommendation.compose', () => composeRecommendations(diagnosisComposition.recommendationRequests))
     : composeRecommendations(diagnosisComposition.recommendationRequests);
+  const usedRuleRecommendationIds = new Set(ruleDiagnoses.flatMap((diagnosis) => diagnosis.recommendationIds));
+  const ruleRecommendations = (input.recommendations ?? []).filter((item) => usedRuleRecommendationIds.has(item.id));
+  const recommendations = [...baseRecommendations, ...ruleRecommendations]
+    .filter((item, index, values) => values.findIndex((candidate) => candidate.id === item.id) === index)
+    .sort((left, right) => left.priority - right.priority);
   if (profiler) {
     const findingEvidenceIds = findings.flatMap((finding) => finding.evidenceIds);
     profiler.increment('linesProcessed', processedLines);
@@ -198,7 +209,106 @@ export function analyzeV1Sources(input: { sourceName: string; files: Record<stri
   const ended = new Date();
   const criticalCount = diagnoses.filter((item) => item.severity === 'critical').length;
   const warningCount = diagnoses.filter((item) => item.severity === 'warning').length;
-  return { schemaVersion: 1, id: `analysis-${started.getTime()}`, status: missingData.length ? 'partial' : 'completed', summary: { criticalCount, warningCount, infoCount: diagnoses.filter((item) => item.severity === 'info').length, primaryDiagnosisId: diagnoses[0]?.id, complete: missingData.length === 0 }, diagnoses, findings, evidence, deviceAssessments, recommendations, metadata: { source: input.sourceName, startTime: started.toISOString(), completeTime: ended.toISOString(), duration: ended.getTime() - started.getTime(), processedFiles: sources.length, processedLines, processedEvents: events.length, analyzerVersion: '1.1.0', rulePackVersion: rulePack.version, missingData } };
+  return { schemaVersion: 1, id: `analysis-${started.getTime()}`, status: missingData.length ? 'partial' : 'completed', summary: { criticalCount, warningCount, infoCount: diagnoses.filter((item) => item.severity === 'info').length, primaryDiagnosisId: diagnoses[0]?.id, complete: missingData.length === 0 }, diagnoses, findings, evidence, deviceAssessments, recommendations, metadata: { source: input.sourceName, startTime: started.toISOString(), completeTime: ended.toISOString(), duration: ended.getTime() - started.getTime(), processedFiles: sources.length, processedLines, processedEvents: events.length, analyzerVersion: '1.1.0', rulePackVersion: input.rulePackVersion ?? rulePack.version, missingData } };
+}
+
+function compileRulesBySource(eventRules: EventRule[]): Record<V1InputSourceType, CompiledEventRule[]> {
+  return Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume', 'ups'] as V1InputSourceType[]).map((source) => [source, eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1InputSourceType, CompiledEventRule[]>;
+}
+
+function applyFindingRules(findings: Finding[], rules: AnalysisFindingRule[]): Finding[] {
+  const ruleByType = new Map(rules.map((rule) => [rule.type, rule]));
+  return findings.map((finding) => {
+    const rule = ruleByType.get(finding.type);
+    if (!rule) return finding;
+    const title = renderFindingTemplate(rule.title, finding);
+    return {
+      ...finding,
+      category: rule.category,
+      severity: rule.severity,
+      confidence: rule.confidence,
+      title,
+      summary: renderFindingTemplate(rule.summary, finding, title)
+    };
+  });
+}
+
+/** 在线 Finding 文案仅可引用固定字段，避免把规则包变成任意表达式执行入口。 */
+function renderFindingTemplate(template: string, finding: Finding, title = finding.title): string {
+  const resource = finding.affectedResources[0] ?? '';
+  const values: Record<string, string> = {
+    resource,
+    resourcePrefix: resource ? `${resource} ` : '',
+    occurrenceCount: String(finding.occurrenceCount),
+    title
+  };
+  return template.replace(/\{\{(resource|resourcePrefix|occurrenceCount|title)\}\}/g, (_match, name: string) => values[name]!);
+}
+
+/** 受限关联只消费已规范化事件，支持存在、排除、同资源计数和顺序窗口，不执行远程代码。 */
+function composeRuleDiagnoses(events: NormalizedEvent[], findings: Finding[], rules: AnalysisDiagnosisRule[]): Diagnosis[] {
+  return [...rules]
+    .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id))
+    .flatMap((rule) => {
+      const matched = matchDiagnosisRule(events, rule);
+      if (!matched) return [];
+      const eventTypes = new Set([...(rule.all ?? []), ...(rule.any ?? []), ...(rule.none ?? []), ...(rule.sequence ?? [])].map((item) => item.type));
+      const affectedResources = [...new Set(matched.map((event) => event.resource).filter((resource): resource is string => Boolean(resource)))];
+      return [{
+        id: rule.id, category: rule.category, severity: rule.severity, confidence: rule.confidence, title: rule.title, summary: rule.summary,
+        affectedResources, findingIds: findings.filter((finding) => eventTypes.has(finding.type)).map((finding) => finding.id), recommendationIds: rule.recommendationIds,
+        ...(rule.userConclusion ? { userConclusion: rule.userConclusion } : {}), ...(rule.engineerConclusion ? { engineerConclusion: rule.engineerConclusion } : {})
+      }];
+    });
+}
+
+function matchDiagnosisRule(events: NormalizedEvent[], rule: AnalysisDiagnosisRule): NormalizedEvent[] | undefined {
+  const matchesCondition = (condition: { type: string; minCount?: number; sameResource?: boolean }) => {
+    const matched = events.filter((event) => event.type === condition.type);
+    if (matched.length < (condition.minCount ?? 1)) return undefined;
+    if (!condition.sameResource) return matched;
+    const resourceCounts = new Map<string, NormalizedEvent[]>();
+    for (const event of matched) if (event.resource) resourceCounts.set(event.resource, [...(resourceCounts.get(event.resource) ?? []), event]);
+    return [...resourceCounts.values()].find((items) => items.length >= (condition.minCount ?? 1));
+  };
+  const required = (rule.all ?? []).map(matchesCondition);
+  if (required.some((items) => !items)) return undefined;
+  const any = rule.any ?? [];
+  if (any.length && !any.some((condition) => matchesCondition(condition))) return undefined;
+  if ((rule.none ?? []).some((condition) => matchesCondition(condition))) return undefined;
+  const sequence = matchSequence(events, rule.sequence ?? []);
+  if (rule.sequence && !sequence) return undefined;
+  return [...required.flatMap((items) => items ?? []), ...(sequence ?? [])];
+}
+
+function matchSequence(events: NormalizedEvent[], sequence: NonNullable<AnalysisDiagnosisRule['sequence']>): NormalizedEvent[] | undefined {
+  if (!sequence.length) return [];
+  const ordered = [...events].sort((left, right) => (left.timestamp ?? '').localeCompare(right.timestamp ?? '') || left.id.localeCompare(right.id));
+  const memo = new Map<string, NormalizedEvent[] | undefined>();
+  const findFrom = (stepIndex: number, from: number): NormalizedEvent[] | undefined => {
+    if (stepIndex === sequence.length) return [];
+    const cacheKey = `${stepIndex}:${from}`;
+    if (memo.has(cacheKey)) return memo.get(cacheKey);
+    const step = sequence[stepIndex]!;
+    const previous = from > 0 ? ordered[from - 1] : undefined;
+    for (let index = from; index < ordered.length; index += 1) {
+      const event = ordered[index]!;
+      if (event.type !== step.type) continue;
+      if (previous && step.withinMs !== undefined) {
+        if (!previous.timestamp || !event.timestamp || Date.parse(event.timestamp) - Date.parse(previous.timestamp) > step.withinMs) continue;
+      }
+      if (previous && step.noInterveningTypes?.some((type) => ordered.slice(from, index).some((candidate) => candidate.type === type))) continue;
+      const tail = findFrom(stepIndex + 1, index + 1);
+      if (tail) {
+        const match = [event, ...tail];
+        memo.set(cacheKey, match);
+        return match;
+      }
+    }
+    memo.set(cacheKey, undefined);
+    return undefined;
+  };
+  return findFrom(0, 0);
 }
 
 function forEachLine(content: string, callback: (line: string, endOffset: number) => void): void { let start = 0; for (let index = 0; index <= content.length; index += 1) { if (index !== content.length && content.charCodeAt(index) !== 10) continue; const end = index > start && content.charCodeAt(index - 1) === 13 ? index - 1 : index; callback(content.slice(start, end), index); start = index + 1; } }
@@ -476,7 +586,7 @@ function buildUpsPowerLossDiagnosis(findings: Finding[], events: NormalizedEvent
  * 诊断层只提升已经由 Finding 证实的事实：SMART 快照本身可定位设备；多设备同时异常提高整体风险，
  * 但不会据此推断 RAID 或文件系统的因果关系。
  */
-function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topology: Map<string, string[]>, deviceArrays: Map<string, string[]>, deviceAssessments: DeviceAssessment[], raidAssessments: Map<string, RaidAssessment>): { diagnoses: Diagnosis[]; recommendationRequests: RecommendationRequest[] } {
+function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topology: Map<string, string[]>, deviceArrays: Map<string, string[]>, deviceAssessments: DeviceAssessment[], raidAssessments: Map<string, RaidAssessment>, externallyDefinedDiagnosisIds: ReadonlySet<string> = new Set()): { diagnoses: Diagnosis[]; recommendationRequests: RecommendationRequest[] } {
   const diagnoses: Diagnosis[] = [];
   const recommendationRequests: RecommendationRequest[] = [];
   const deviceByResource = new Map(deviceAssessments.map((device) => [device.resource, device]));
@@ -620,11 +730,13 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
     }
   }
   if (!diagnoses.length) { const raid = findings.find((finding) => finding.type === 'raid.degraded'); if (raid) diagnoses.push({ id: 'raid.array.degraded', category: 'raid', severity: 'critical', confidence: 'confirmed', title: `${raid.affectedResources[0] ?? 'RAID'} 已降级`, summary: '阵列状态异常，需要确认冗余与成员状态。', primaryResource: raid.affectedResources[0], affectedResources: raid.affectedResources, findingIds: [raid.id], recommendationIds: [] }); }
-  const upsDiagnosis = buildUpsPowerLossDiagnosis(findings, events);
-  if (upsDiagnosis) {
-    recommendationRequests.push({ kind: 'ups', resource: 'system' });
-    if (diagnoses.some((diagnosis) => diagnosis.severity === 'critical')) diagnoses.push(upsDiagnosis);
-    else diagnoses.unshift(upsDiagnosis);
+  if (!externallyDefinedDiagnosisIds.has('power.ups_power_loss_suspected')) {
+    const upsDiagnosis = buildUpsPowerLossDiagnosis(findings, events);
+    if (upsDiagnosis) {
+      recommendationRequests.push({ kind: 'ups', resource: 'system' });
+      if (diagnoses.some((diagnosis) => diagnosis.severity === 'critical')) diagnoses.push(upsDiagnosis);
+      else diagnoses.unshift(upsDiagnosis);
+    }
   }
   return { diagnoses, recommendationRequests }; }
 

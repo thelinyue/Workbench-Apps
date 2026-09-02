@@ -7,6 +7,7 @@ import type { AnalyzerRuleCatalog } from '../analysis/log-analyzer';
 import type { AnalysisTaskRecord, AnalysisTaskStage, WorkspaceRepository } from '../data/workspace-repository';
 import type { AnalysisResult } from '../analysis-v1/pipeline';
 import type { PipelineProfile } from '../analysis-v1/pipeline-profiler';
+import type { AnalysisRulePackage } from './analysis-rules-service';
 
 interface AnalysisWorkerMessage {
   type?: 'progress' | 'completed';
@@ -29,7 +30,9 @@ export interface AnalysisWorker {
 }
 
 export interface AnalysisTaskServiceOptions {
-  createWorker?: (url: URL, options: { workerData: { sourcePath: string; extractDirectory: string; performanceProfiling?: boolean } }) => AnalysisWorker;
+  createWorker?: (url: URL, options: { workerData: { sourcePath: string; extractDirectory: string; rulePackage?: AnalysisRulePackage; performanceProfiling?: boolean } }) => AnalysisWorker;
+  /** 每次 Worker 启动前读取一次，确保运行中的任务不受在线更新影响。 */
+  getRulePackage?: () => Promise<AnalysisRulePackage>;
   notify?: (notification: { title: string; body: string; windowKey: 'main'; activationPayload: { kind: 'result' | 'failure'; packageId: string } }) => void;
   logger?: Pick<Console, 'warn'>;
   performanceProfiling?: { onCompleted: (profile: PipelineProfile) => void };
@@ -169,7 +172,8 @@ export class AnalysisTaskService extends EventEmitter {
     this.emit('changed');
 
     try {
-      const output = await this.runWorker(diagnosticPackage.sourcePath, diagnosticPackage.extractPath, (progress, stage, message) => {
+      const rulePackage = await this.options.getRulePackage?.();
+      const output = await this.runWorker(diagnosticPackage.sourcePath, diagnosticPackage.extractPath, rulePackage, (progress, stage, message) => {
         const current = this.repository.getTask(task.id);
         if (!current || current.status !== 'running') return;
         this.repository.upsertTask({ ...current, progress: Math.max(current.progress, progress), stage, message });
@@ -233,10 +237,10 @@ export class AnalysisTaskService extends EventEmitter {
     }
   }
 
-  private runWorker(sourcePath: string, extractDirectory: string, onProgress: (progress: number, stage: AnalysisTaskStage, message: string) => void): Promise<{ browserPath: string; result: AnalysisResult; runtimeTimings?: AnalysisRuntimeTimings; performanceProfile?: PipelineProfile }> {
+  private runWorker(sourcePath: string, extractDirectory: string, rulePackage: AnalysisRulePackage | undefined, onProgress: (progress: number, stage: AnalysisTaskStage, message: string) => void): Promise<{ browserPath: string; result: AnalysisResult; runtimeTimings?: AnalysisRuntimeTimings; performanceProfile?: PipelineProfile }> {
     return new Promise((resolve, reject) => {
       // 分析中心 backend 以 ESM 发布，必须从实际 entry URL 定位同级 Worker，不能依赖 CommonJS 的 __dirname。
-      const workerData = { sourcePath, extractDirectory, ...(this.options.performanceProfiling ? { performanceProfiling: true } : {}) };
+      const workerData = { sourcePath, extractDirectory, ...(rulePackage ? { rulePackage } : {}), ...(this.options.performanceProfiling ? { performanceProfiling: true } : {}) };
       const worker = (this.options.createWorker ?? createDefaultAnalysisWorker)(new URL('./analysis-worker.js', import.meta.url), { workerData });
       this.activeWorker = worker;
       let settled = false;
@@ -335,7 +339,7 @@ export class AnalysisTaskService extends EventEmitter {
   }
 }
 
-function createDefaultAnalysisWorker(url: URL, options: { workerData: { sourcePath: string; extractDirectory: string; performanceProfiling?: boolean } }): AnalysisWorker {
+function createDefaultAnalysisWorker(url: URL, options: { workerData: { sourcePath: string; extractDirectory: string; rulePackage?: AnalysisRulePackage; performanceProfiling?: boolean } }): AnalysisWorker {
   return new Worker(url, options);
 }
 

@@ -2,8 +2,51 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { analyzeV1Sources } from '../backend/lib/analysis-v1/pipeline';
 import { PipelineProfiler } from '../backend/lib/analysis-v1/pipeline-profiler';
+import { builtInAnalysisRulePackage } from '../backend/lib/analysis-rules/built-in-analysis-rule-package';
 
 describe('V1 统一诊断分析', () => {
+  it('使用受限规则包的顺序关联生成诊断与建议', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'online-rules.tgz',
+      files: {
+        'ups/ups_tool.log': [
+          '2026-09-02T10:00:00Z status FIRST',
+          '2026-09-02T10:01:00Z status SECOND',
+          '2026-09-02T10:02:00Z status THIRD'
+        ].join('\n')
+      },
+      eventRules: [
+        { id: 'first', sources: ['ups'], regex: 'status FIRST', type: 'power.first' },
+        { id: 'second', sources: ['ups'], regex: 'status SECOND', type: 'power.second' },
+        { id: 'third', sources: ['ups'], regex: 'status THIRD', type: 'power.third' }
+      ],
+      diagnosisRules: [{
+        id: 'power.online_chain', priority: 1,
+        sequence: [{ type: 'power.first', withinMs: 180_000 }, { type: 'power.second', withinMs: 180_000 }, { type: 'power.third', withinMs: 180_000 }],
+        category: 'power', severity: 'warning', confidence: 'high', title: '在线规则关联诊断', summary: '按顺序检测到三项供电事件。', userConclusion: '您好，检测到完整供电事件链。', recommendationIds: ['recommendation.power']
+      }],
+      recommendations: [{ id: 'recommendation.power', priority: 1, type: 'inspection', title: '检查供电', reason: '确认供电状态。', risk: 'safe' }]
+    });
+
+    expect(result.diagnoses).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'power.online_chain', title: '在线规则关联诊断', recommendationIds: ['recommendation.power'] })]));
+    expect(result.recommendations).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'recommendation.power', title: '检查供电' })]));
+  });
+
+  it('仅渲染 Finding 规则允许的固定模板字段', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'online-finding.tgz',
+      files: { 'kern.log': '2026-09-02T10:00:00Z kernel: Buffer I/O error on dev sdc' },
+      findingRules: [{
+        type: 'storage.io_error', category: 'storage', severity: 'warning', confidence: 'high',
+        title: '{{resourcePrefix}}在线 I/O 错误', summary: '{{title}}，共 {{occurrenceCount}} 条。'
+      }]
+    });
+
+    expect(result.findings).toContainEqual(expect.objectContaining({
+      type: 'storage.io_error', title: '/dev/sdc 在线 I/O 错误', summary: '/dev/sdc 在线 I/O 错误，共 1 条。', confidence: 'high'
+    }));
+  });
+
   it('显式性能采集在同次来源遍历中累计解析、规则与产物指标', () => {
     const profiler = new PipelineProfiler();
 
@@ -539,6 +582,11 @@ describe('V1 统一诊断分析', () => {
   it('将完整 UPS 停电保护链与随后异常启动痕迹关联为高置信根因诊断', () => {
     const result = analyzeV1Sources({
       sourceName: 'ups-power-loss.tgz',
+      eventRules: builtInAnalysisRulePackage.v1.eventRules,
+      findingRules: builtInAnalysisRulePackage.v1.findingRules,
+      diagnosisRules: builtInAnalysisRulePackage.v1.diagnosisRules,
+      recommendations: builtInAnalysisRulePackage.v1.recommendations,
+      rulePackVersion: builtInAnalysisRulePackage.version,
       files: {
         'ups/ups_tool.log': [
           'ups_tool INFO 2026-08-26 20:47:15.208493 main.go:499 ups status: OB',
@@ -567,6 +615,8 @@ describe('V1 统一诊断分析', () => {
       recommendationIds: ['recommendation.ups:system'],
       userConclusion: expect.stringContaining('UPS 电量耗尽后供电中断高度一致')
     });
+    expect(result.diagnoses.filter((item) => item.id === 'power.ups_power_loss_suspected')).toHaveLength(1);
+    expect(result.diagnoses[0]).not.toHaveProperty('correlationWindowMs');
     expect(result.recommendations).toContainEqual({
       id: 'recommendation.ups:system',
       priority: 1,
@@ -597,6 +647,32 @@ describe('V1 统一诊断分析', () => {
       expect.objectContaining({ type: 'system.unclean_shutdown' })
     ]));
     expect(result.diagnoses).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'power.ups_power_loss_suspected' })
+    ]));
+  });
+
+  it('UPS 旧周期被在线状态打断后仍关联后续完整停电周期', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'ups-later-complete-cycle.tgz',
+      eventRules: builtInAnalysisRulePackage.v1.eventRules,
+      findingRules: builtInAnalysisRulePackage.v1.findingRules,
+      diagnosisRules: builtInAnalysisRulePackage.v1.diagnosisRules,
+      recommendations: builtInAnalysisRulePackage.v1.recommendations,
+      files: {
+        'ups_tool.log': [
+          'ups_tool INFO 2026-08-20 20:00:00 main.go:499 ups status: OB',
+          'ups_tool INFO 2026-08-20 20:00:01 main.go:140 set timer standby success, seconds: 1800',
+          'ups_tool INFO 2026-08-20 20:01:00 main.go:499 ups status: OL',
+          'ups_tool INFO 2026-08-26 20:47:15 main.go:499 ups status: OB',
+          'ups_tool INFO 2026-08-26 20:47:16 main.go:140 set timer standby success, seconds: 1800',
+          'ups_tool INFO 2026-08-26 21:26:10 main.go:579 ups status: ALARM OB LB',
+          'ups_tool INFO 2026-08-26 21:26:11 main.go:597 already standby'
+        ].join('\n'),
+        'kern.log': '2026-08-26 21:27:00 kernel: EXT4-fs (mmcblk0p4): orphan cleanup on readonly fs'
+      }
+    });
+
+    expect(result.diagnoses).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'power.ups_power_loss_suspected' })
     ]));
   });
