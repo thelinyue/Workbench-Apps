@@ -152,8 +152,8 @@ export function createAppBackend(context: AppBackendContext): AppBackend {
           return undefined;
         }
         case 'settings.get': return repository.getMonitorSettings();
-        case 'rules.get-state': return rules.getState();
-        case 'rules.update': return rules.update();
+        case 'analysis-rules.get-state': return rules.getState();
+        case 'analysis-rules.update': return rules.update();
         case 'monitor.status': return monitor.getStatus();
         case 'settings.save': {
           const value = readRecord(payload);

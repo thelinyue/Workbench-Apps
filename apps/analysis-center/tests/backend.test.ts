@@ -1,20 +1,43 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAppBackend } from '../backend/entry';
 
 const directories: string[] = [];
-afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
+afterEach(async () => { vi.unstubAllGlobals(); await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
 
 describe('分析中心 backend Worker', () => {
-  it('从应用私有目录读取内置规则状态，不调用 Workbench 规则服务', async () => {
+  it('通过应用私有 RPC 读取内置规则状态，不调用 Workbench 规则服务', async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-rules-state-'));
     directories.push(dataDirectory);
     const backend = createAppBackend({ appId: 'analysis-center', dataDirectory, manifest: {}, emit: () => undefined, showNotification: () => undefined });
 
     try {
-      await expect(backend.invoke('rules.get-state', null)).resolves.toEqual({ currentVersion: '1.0.0', source: 'bundled' });
+      await expect(backend.invoke('analysis-rules.get-state', null)).resolves.toEqual({ currentVersion: '1.0.0', source: 'bundled' });
+    } finally {
+      await backend.close();
+    }
+  });
+
+  it('通过应用私有 RPC 检查规则更新，不进入 Workbench 规则服务', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'analysis-center-rules-update-'));
+    directories.push(dataDirectory);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      schemaVersion: 1,
+      ruleSetId: 'analysis-center-runtime-rules',
+      version: '1.0.0',
+      packageUrl: 'https://example.test/analysis-rules.json',
+      packageSize: 1,
+      sha256: '0'.repeat(64),
+      signatureAlgorithm: 'Ed25519',
+      keyId: 'test-key',
+      signature: 'test-signature'
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const backend = createAppBackend({ appId: 'analysis-center', dataDirectory, manifest: {}, emit: () => undefined, showNotification: () => undefined });
+
+    try {
+      await expect(backend.invoke('analysis-rules.update', null)).resolves.toEqual({ status: 'up-to-date', previousVersion: '1.0.0', currentVersion: '1.0.0' });
     } finally {
       await backend.close();
     }

@@ -69,7 +69,7 @@ export function AnalysisCenterApp() {
 
   const load = useMemo(() => createLatestLoad(
     () => Promise.all([
-      host.invoke<PackageItem[]>('packages.list'), host.invoke<TaskItem[]>('tasks.list'), host.invoke<MonitorSettings>('settings.get'), host.invoke<{ state: string; warning?: string }>('monitor.status'), host.invoke<Array<{ packageId: string; result: ResultSummary }>>('results.recent'), host.invoke<RuleUpdateState>('rules.get-state')
+      host.invoke<PackageItem[]>('packages.list'), host.invoke<TaskItem[]>('tasks.list'), host.invoke<MonitorSettings>('settings.get'), host.invoke<{ state: string; warning?: string }>('monitor.status'), host.invoke<Array<{ packageId: string; result: ResultSummary }>>('results.recent'), host.invoke<RuleUpdateState>('analysis-rules.get-state')
     ]),
     ([nextPackages, nextTasks, nextMonitor, nextMonitorStatus, nextRecentResults, nextRuleState]) => {
       setPackages(nextPackages); setTasks(nextTasks); setMonitor(nextMonitor); setMonitorStatus(nextMonitorStatus); setRecentResults(nextRecentResults); setRuleState(nextRuleState);
@@ -141,7 +141,7 @@ export function AnalysisCenterApp() {
   const selectMonitorDirectory = async () => settingsActions.chooseDirectory();
   const saveSettings = async () => settingsActions.save();
   const scanExisting = async () => { setScanningExisting(true); setMessage(''); try { await host.invoke('packages.scan'); await load(); } catch (error) { showError(error); } finally { setScanningExisting(false); } };
-  const updateRules = async () => { if (updatingRules) return; setUpdatingRules(true); setMessage(''); try { const result = await host.invoke<RuleUpdateResult>('rules.update'); setRuleState({ currentVersion: result.currentVersion, source: 'downloaded' }); setMessage(getRuleUpdateMessage(result)); } catch (error) { showError(error); } finally { setUpdatingRules(false); } };
+  const updateRules = async () => { if (updatingRules) return; setUpdatingRules(true); setMessage(''); try { const result = await host.invoke<RuleUpdateResult>('analysis-rules.update'); setRuleState({ currentVersion: result.currentVersion, source: 'downloaded' }); setMessage(getRuleUpdateMessage(result)); } catch (error) { showError(error); } finally { setUpdatingRules(false); } };
   const openMonitorDirectory = async () => { if (monitor.directory) await host.invoke('host.openPath', { path: monitor.directory }); };
   const openBrowser = async () => { const item = packages.find((value) => value.id === resultPackageId); if (item?.reportPath) await host.invoke('host.openPath', { path: item.reportPath }); };
   const openCompleteSysinfo = async () => { if (!resultPackageId || sysinfoReportLoading) return; setSysinfoReportLoading(true); try { await openSysinfoReport(host, resultPackageId); } catch (error) { showError(error); } finally { setSysinfoReportLoading(false); } };

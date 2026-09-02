@@ -5,7 +5,7 @@ describe('分析中心独立应用包', () => {
   it('package 与 manifest 使用同一独立版本和运行时入口', async () => {
     const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8')) as { id: string; version: string; hostApiVersion: string; minWorkbenchVersion: string; window: { defaultSize: { width: number; height: number }; minSize: { width: number; height: number } }; runtime: { rendererEntry: string; backendEntry: string }; capabilities: string[] };
     const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
-    expect(manifest).toMatchObject({ id: 'analysis-center', version: '2.0.9', hostApiVersion: '1.1', minWorkbenchVersion: '0.1.7', window: { defaultSize: { width: 800, height: 560 }, minSize: { width: 800, height: 560 } }, runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' } });
+    expect(manifest).toMatchObject({ id: 'analysis-center', version: '2.0.10', hostApiVersion: '1.1', minWorkbenchVersion: '0.1.7', window: { defaultSize: { width: 800, height: 560 }, minSize: { width: 800, height: 560 } }, runtime: { rendererEntry: 'renderer/index.html', backendEntry: 'backend/entry.js' } });
     expect(packageJson.version).toBe(manifest.version);
     expect(manifest.capabilities).toContain('file.open');
     expect(manifest.capabilities).not.toEqual(expect.arrayContaining(['rules.read', 'rules.update']));
