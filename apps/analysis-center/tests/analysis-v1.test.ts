@@ -535,4 +535,127 @@ describe('V1 统一诊断分析', () => {
       expect.objectContaining({ type: 'system.shutdown_sync_timeout' })
     ]));
   });
+
+  it('将完整 UPS 停电保护链与随后异常启动痕迹关联为高置信根因诊断', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'ups-power-loss.tgz',
+      files: {
+        'ups/ups_tool.log': [
+          'ups_tool INFO 2026-08-26 20:47:15.208493 main.go:499 ups status: OB',
+          'ups_tool INFO 2026-08-26 20:47:15.240419 main.go:140 set timer standby success, seconds: 1800',
+          'ups_tool INFO 2026-08-26 21:26:10.077341 main.go:579 ups status: ALARM OB LB',
+          'ups_tool INFO 2026-08-26 21:26:10.078027 main.go:597 already standby',
+          'ups_tool INFO 2026-09-02 10:44:13.348127 main.go:690 start nut service success'
+        ].join('\n'),
+        'kern.log': '2026-09-02 10:43:48 kernel: EXT4-fs (mmcblk0p4): orphan cleanup on readonly fs'
+      }
+    });
+
+    expect(result.diagnoses[0]).toMatchObject({
+      id: 'power.ups_power_loss_suspected',
+      category: 'power',
+      severity: 'warning',
+      confidence: 'high',
+      affectedResources: [],
+      findingIds: expect.arrayContaining([
+        'power.ups_on_battery:system',
+        'power.ups_standby_scheduled:system',
+        'power.ups_low_battery:system',
+        'power.ups_already_standby:system',
+        'system.unclean_shutdown:system'
+      ]),
+      recommendationIds: ['recommendation.ups:system'],
+      userConclusion: expect.stringContaining('UPS 电量耗尽后供电中断高度一致')
+    });
+    expect(result.recommendations).toContainEqual({
+      id: 'recommendation.ups:system',
+      priority: 1,
+      type: 'inspection',
+      title: '检查 UPS 电池与带载续航',
+      reason: '确认 UPS 电池健康、实际负载、可用续航和低电量保护策略。',
+      risk: 'safe'
+    });
+  });
+
+  it('UPS 恢复在线后即使随后出现异常启动痕迹也不跨停电周期归因', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'ups-online-before-boot.tgz',
+      files: {
+        'ups_tool.log': [
+          'ups_tool INFO 2026-08-26 20:47:15 main.go:499 ups status: OB',
+          'ups_tool INFO 2026-08-26 20:47:16 main.go:140 set timer standby success, seconds: 1800',
+          'ups_tool INFO 2026-08-26 20:48:00 main.go:499 ups status: OL',
+          'ups_tool INFO 2026-09-02 10:44:13 main.go:690 start nut service success'
+        ].join('\n'),
+        'kern.log': '2026-09-02 10:43:48 kernel: EXT4-fs (mmcblk0p4): orphan cleanup on readonly fs'
+      }
+    });
+
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'power.ups_on_battery' }),
+      expect.objectContaining({ type: 'power.ups_online' }),
+      expect.objectContaining({ type: 'system.unclean_shutdown' })
+    ]));
+    expect(result.diagnoses).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'power.ups_power_loss_suspected' })
+    ]));
+  });
+
+  it('不把 UPS 命令、在线低电量、零秒定时和 USB 枚举噪声识别为停电保护链', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'ups-noise.tgz',
+      files: {
+        'ups_tool.log': [
+          'ups_tool INFO 2026-07-12 21:00:01 main.go:82 [/usr/sbin/ups_tool onbatt]',
+          'ups_tool INFO 2026-07-12 21:00:02 main.go:579 ups status: OL LB',
+          'ups_tool INFO 2026-07-12 21:00:03 main.go:140 set timer standby success, seconds: 0',
+          'ups_tool WARN 2026-07-12 21:00:04 main.go:954 not usb ups, product: 1d6b/3/612',
+          'ups_tool INFO 2026-07-12 21:00:05 main.go:690 start nut service success'
+        ].join('\n')
+      }
+    });
+
+    expect(result.findings).toEqual([
+      expect.objectContaining({ type: 'power.ups_service_started', severity: 'info' })
+    ]);
+    expect(result.diagnoses).toEqual([]);
+  });
+
+  it('完整 UPS 事件链缺少后续异常启动证据时只保留事实 Finding', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'ups-chain-without-unclean-boot.tgz',
+      files: {
+        'ups_tool.log': [
+          'ups_tool INFO 2026-08-26 20:47:15 main.go:499 ups status: OB',
+          'ups_tool INFO 2026-08-26 20:47:16 main.go:140 set timer standby success, seconds: 1800',
+          'ups_tool INFO 2026-08-26 21:26:10 main.go:579 ups status: ALARM OB LB',
+          'ups_tool INFO 2026-08-26 21:26:11 main.go:597 already standby'
+        ].join('\n')
+      }
+    });
+
+    expect(result.findings).toHaveLength(4);
+    expect(result.diagnoses).toEqual([]);
+  });
+
+  it('UPS 服务在异常启动痕迹之前重启时终止旧停电周期，避免历史事件污染', () => {
+    const result = analyzeV1Sources({
+      sourceName: 'stale-ups-cycle.tgz',
+      files: {
+        'ups_tool.log': [
+          'ups_tool INFO 2026-08-20 20:47:15 main.go:499 ups status: OB',
+          'ups_tool INFO 2026-08-20 20:47:16 main.go:140 set timer standby success, seconds: 1800',
+          'ups_tool INFO 2026-08-20 21:26:10 main.go:579 ups status: ALARM OB LB',
+          'ups_tool INFO 2026-08-20 21:26:11 main.go:597 already standby',
+          'ups_tool INFO 2026-08-21 08:00:00 main.go:690 start nut service success'
+        ].join('\n'),
+        'kern.log': '2026-09-02 10:43:48 kernel: EXT4-fs (mmcblk0p4): orphan cleanup on readonly fs'
+      }
+    });
+
+    expect(result.diagnoses).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'power.ups_power_loss_suspected' })
+    ]));
+  });
+
 });

@@ -104,12 +104,27 @@ describe('内置日志分析引擎', () => {
     expect(terms).not.toEqual(expect.arrayContaining(['NormalFlag', '因电源或其它原因导致设备异常关机', 'not usb ups']));
     expect(issues.map((issue) => issue.message)).toEqual(expect.arrayContaining([
       '记录到内核启动标记，可用于确认一次启动或重启',
-      'EXT4 清理未正常关闭遗留的 orphan inode，支持上次异常中断',
+      'EXT4 清理未正常关闭遗留数据，支持上次异常中断',
       'EXT4 文件系统启动时完成日志恢复，支持上次未正常卸载',
       'UPS 已切换至电池供电，说明外部输入曾出现异常',
       'UPS 通信丢失，需结合 UPS 事件日志判断是否发生掉电',
       'UPS 设备离线，需结合 UPS 事件日志判断是否发生掉电'
     ]));
+  });
+
+  it('TGZ 通用规则识别 EXT4 在只读文件系统上的 orphan cleanup', async () => {
+    const extractDirectory = await mkdtemp(join(tmpdir(), 'workbench-ext4-orphan-cleanup-'));
+    directories.push(extractDirectory);
+    await writeFile(join(extractDirectory, 'kern'), 'EXT4-fs (mmcblk0p4): orphan cleanup on readonly fs\n', 'utf8');
+
+    const result = await analyzeExtractedDirectory(extractDirectory, builtInAnalyzerRules.tgz);
+
+    expect(result.files[0]?.issues).toEqual([
+      expect.objectContaining({
+        message: 'EXT4 清理未正常关闭遗留数据，支持上次异常中断',
+        line: 1
+      })
+    ]);
   });
 
   it('异常重启规则识别点号日志名中的内存压力、异常中断和启动边界', async () => {

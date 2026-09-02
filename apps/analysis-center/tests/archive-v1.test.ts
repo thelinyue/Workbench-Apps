@@ -50,7 +50,7 @@ it('归档分析返回 V1 AnalysisResult，而不是旧关键词报告模型', a
   const html = await readFile(result.browserPath, 'utf8');
   expect(html).not.toContain('TGZ 专用规则检测到');
   expect(html).toContain('硬盘 3（序列号：SERIAL-003）：检测到多次读写错误（I/O Error）；硬盘健康信息存在异常。');
-  expect(html).toContain('规则包：tgz@2026.08.26');
+  expect(html).toContain('规则包：tgz@2026.09.02');
   expect(html).toContain('UPS 已切换至电池供电，说明外部输入曾出现异常');
   expect(html).toContain('data-report-format="tgz"');
   expect(html).toContain('TGZ 系统诊断报告');
@@ -99,6 +99,41 @@ it('TGZ 没有明确硬盘故障时不把规则命中作为主诊断，但保留
   ]));
   expect(result.result.evidence).toEqual(expect.arrayContaining([
     expect.objectContaining({ eventType: 'format-rule.tgz.syslog', rawMessage: '2026-08-26T03:12:01+08:00 UPS ups0@localhost on battery' })
+  ]));
+});
+
+it('TGZ UPS 停电链使用结构化根因作为主诊断，格式规则只补充证据', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'analysis-v1-tgz-ups-power-loss-'));
+  directories.push(root);
+  await mkdir(join(root, 'ups'));
+  await writeFile(join(root, 'ups', 'ups_tool.log'), [
+    'ups_tool INFO 2026-08-26 20:47:15 main.go:499 ups status: OB',
+    'ups_tool INFO 2026-08-26 20:47:16 main.go:140 set timer standby success, seconds: 1800',
+    'ups_tool INFO 2026-08-26 21:26:10 main.go:579 ups status: ALARM OB LB',
+    'ups_tool INFO 2026-08-26 21:26:11 main.go:597 already standby',
+    'ups_tool INFO 2026-09-02 10:44:13 main.go:690 start nut service success'
+  ].join('\n'));
+  await writeFile(join(root, 'kern.log'), '2026-09-02 10:43:48 kernel: EXT4-fs (mmcblk0p4): orphan cleanup on readonly fs');
+  const archivePath = join(root, 'ups-power-loss.tgz');
+  await tar.c({ gzip: true, file: archivePath, cwd: root }, ['ups', 'kern.log']);
+
+  const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'extracted') });
+
+  expect(output.result.diagnoses[0]).toMatchObject({
+    id: 'power.ups_power_loss_suspected',
+    confidence: 'high',
+    recommendationIds: ['recommendation.ups:system']
+  });
+  expect(output.result.diagnoses).not.toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'format-rule.tgz.summary' })
+  ]));
+  expect(output.result.findings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'power.ups_low_battery', category: 'power' }),
+    expect.objectContaining({ type: 'format-rule.tgz.kern', category: 'format-rule' })
+  ]));
+  expect(output.result.evidence).toEqual(expect.arrayContaining([
+    expect.objectContaining({ sourceFile: 'ups/ups_tool.log', eventType: 'power.ups_already_standby' }),
+    expect.objectContaining({ sourceFile: 'kern.log', eventType: 'system.unclean_shutdown' })
   ]));
 });
 
@@ -158,7 +193,7 @@ it('V1 分析保留 gzip 轮转日志但不读取其内容，并保留既有非 
   const result = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory });
 
   expect(result.result.metadata.processedFiles).toBe(5);
-  expect(result.result.metadata.rulePackVersion).toBe('tgz@2026.08.26');
+  expect(result.result.metadata.rulePackVersion).toBe('tgz@2026.09.02');
   expect(result.result.findings).toEqual(expect.arrayContaining([
     expect.objectContaining({ type: 'format-rule.tgz.sysinfo.json', title: '硬盘信息' })
   ]));
@@ -279,7 +314,7 @@ it('TGZ 使用 TGZ 规则，ZIP 专用文件名不会被 TGZ 规则接受', asyn
   await tar.c({ gzip: true, file: archivePath, cwd: root }, ['syslog']);
 
   const output = await runV1ArchiveAnalysis({ sourcePath: archivePath, extractDirectory: join(root, 'tgz-extracted') });
-  expect(output.result.metadata.rulePackVersion).toBe('tgz@2026.08.26');
+  expect(output.result.metadata.rulePackVersion).toBe('tgz@2026.09.02');
   expect(output.result.findings).toEqual(expect.arrayContaining([
     expect.objectContaining({
       type: 'format-rule.tgz.syslog',

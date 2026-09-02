@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.5.0",
+  "version": "1.6.0",
   "eventRules": [
     {"id":"storage.io.blk_update","sources":["kernel"],"regex":"blk_update_request: I/O error, dev (?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
     {"id":"storage.io.buffer","sources":["kernel"],"regex":"Buffer I/O error on dev (?<device>[a-zA-Z0-9]+)","type":"storage.io_error"},
@@ -28,7 +28,7 @@
     {"id":"system.oom","sources":["kernel"],"regex":"Out of memory","type":"system.oom"},
     {"id":"system.oom_killer","sources":["kernel"],"regex":"oom-kill|Killed process","type":"system.oom_killer"},
     {"id":"system.watchdog","sources":["kernel"],"regex":"watchdog.*(?:hard|soft) lockup","type":"system.watchdog"},
-    {"id":"system.shutdown.unclean","sources":["kernel"],"regex":"uncleanly shut down|orphan inode|recovery complete","type":"system.unclean_shutdown"},
+    {"id":"system.shutdown.unclean","sources":["kernel"],"regex":"uncleanly shut down|orphan inode|orphan cleanup on readonly fs|recovery complete","type":"system.unclean_shutdown"},
     {"id":"filesystem.ext4.error","sources":["kernel"],"regex":"EXT4-fs.*(?:error|I/O)","type":"filesystem.error"},
     {"id":"filesystem.xfs.error","sources":["kernel"],"regex":"XFS.*(?:error|corrupt|I/O)","type":"filesystem.error"},
     {"id":"filesystem.btrfs.pool_error","sources":["kernel"],"regex":"BTRFS.*bdev /dev/mapper/\\S*_(?<pool>pool\\d+)-\\S*.*(?:errs:|error)","type":"filesystem.error"},
@@ -38,6 +38,12 @@
     {"id":"storage.smart.reallocated","sources":["sysinfo"],"regex":"Reallocated_Sector_Ct","type":"storage.smart_risk"},
     {"id":"storage.smart.uncorrectable","sources":["sysinfo"],"regex":"Offline_Uncorrectable","type":"storage.smart_risk"},
     {"id":"raid.array.degraded","sources":["mdstat"],"regex":"\\[\\d+\\/\\d+\\].*(?:_|broken)","type":"raid.degraded"},
-    {"id":"filesystem.mount.superblock","sources":["ugvolume"],"regex":"can't read superblock","type":"filesystem.error"}
+    {"id":"filesystem.mount.superblock","sources":["ugvolume"],"regex":"can't read superblock","type":"filesystem.error"},
+    {"id":"power.ups.status.on_battery","sources":["ups"],"regex":"ups status:\\s*OB\\s*$","type":"power.ups_on_battery"},
+    {"id":"power.ups.standby.scheduled","sources":["ups"],"regex":"set timer standby success, seconds:\\s*(?<seconds>[1-9]\\d*)\\s*$","type":"power.ups_standby_scheduled"},
+    {"id":"power.ups.status.low_battery","sources":["ups"],"regex":"ups status:\\s*(?=[^\\r\\n]*\\bOB\\b)(?=[^\\r\\n]*\\bLB\\b)[A-Z ]+\\s*$","type":"power.ups_low_battery"},
+    {"id":"power.ups.standby.active","sources":["ups"],"regex":"\\balready standby\\s*$","type":"power.ups_already_standby"},
+    {"id":"power.ups.status.online","sources":["ups"],"regex":"ups status:\\s*OL\\s*$","type":"power.ups_online"},
+    {"id":"power.ups.service.started","sources":["ups"],"regex":"\\bstart nut service success\\s*$","type":"power.ups_service_started"}
   ]
 }

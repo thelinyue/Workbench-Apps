@@ -1,6 +1,6 @@
 {
   "tgz": {
-    "version": "2026.08.26",
+    "version": "2026.09.02",
     "files": [
         {
             "name": "sysinfo.json", 
@@ -58,7 +58,7 @@
                 {"term": "usb usb.*-port.*config error", "result": "USB接口识别异常","regex": true, "context_lines": 2, "context_direction": "down", "search_direction": "up"},
                 {"term": "Linux version", "result": "记录到内核启动标记，可用于确认一次启动或重启","regex": false, "severity": "info", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "EXT4-fs.*recovery complete", "result": "EXT4 文件系统启动时完成日志恢复，支持上次未正常卸载","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
-                {"term": "EXT4-fs.*orphan inode(?:s)? deleted", "result": "EXT4 清理未正常关闭遗留的 orphan inode，支持上次异常中断","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "EXT4-fs.*(?:orphan inode(?:s)? deleted|orphan cleanup on readonly fs)", "result": "EXT4 清理未正常关闭遗留数据，支持上次异常中断","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "Kernel panic", "result": "发现内核崩溃证据，需优先检查内核、驱动和硬件","regex": false, "severity": "critical", "context_lines": 20, "context_direction": "down", "search_direction": "up"},
                 {"term": "(?:Out of memory|oom-kill)", "result": "发现内存耗尽证据，需检查高占用进程或虚拟机","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
                 {"term": "thermal.*shutdown", "result": "发现过温关机证据，需检查散热和环境温度","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
@@ -96,7 +96,7 @@
                 {"term": "earlyoom.*swap free:\\s*0 of", "result": "交换空间已耗尽，支持严重内存压力判断","regex": true, "severity": "critical", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "Linux version", "result": "记录到内核启动标记，可用于确认一次启动或重启","regex": false, "severity": "info", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "EXT4-fs.*recovery complete", "result": "EXT4 文件系统启动时完成日志恢复，支持上次未正常卸载","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
-                {"term": "EXT4-fs.*orphan inode(?:s)? deleted", "result": "EXT4 清理未正常关闭遗留的 orphan inode，支持上次异常中断","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "EXT4-fs.*(?:orphan inode(?:s)? deleted|orphan cleanup on readonly fs)", "result": "EXT4 清理未正常关闭遗留数据，支持上次异常中断","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "Kernel panic", "result": "发现内核崩溃证据，需优先检查内核、驱动和硬件","regex": false, "severity": "critical", "context_lines": 20, "context_direction": "down", "search_direction": "up"},
                 {"term": "(?:Out of memory|oom-kill)", "result": "发现内存耗尽证据，需检查高占用进程或虚拟机","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
                 {"term": "thermal.*shutdown", "result": "发现过温关机证据，需检查散热和环境温度","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
@@ -131,7 +131,7 @@
                 {"term": "i915.*GPU HANG", "result": "i915 GPU异常","regex": true, "context_lines": 0, "context_direction": "down", "search_direction": "up"},
                 {"term": "Linux version", "result": "记录到内核启动标记，可用于确认一次启动或重启","regex": false, "severity": "info", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "EXT4-fs.*recovery complete", "result": "EXT4 文件系统启动时完成日志恢复，支持上次未正常卸载","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
-                {"term": "EXT4-fs.*orphan inode(?:s)? deleted", "result": "EXT4 清理未正常关闭遗留的 orphan inode，支持上次异常中断","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
+                {"term": "EXT4-fs.*(?:orphan inode(?:s)? deleted|orphan cleanup on readonly fs)", "result": "EXT4 清理未正常关闭遗留数据，支持上次异常中断","regex": true, "severity": "warning", "context_lines": 1, "context_direction": "down", "search_direction": "up"},
                 {"term": "Kernel panic", "result": "发现内核崩溃证据，需优先检查内核、驱动和硬件","regex": false, "severity": "critical", "context_lines": 20, "context_direction": "down", "search_direction": "up"},
                 {"term": "(?:Out of memory|oom-kill)", "result": "发现内存耗尽证据，需检查高占用进程或虚拟机","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
                 {"term": "thermal.*shutdown", "result": "发现过温关机证据，需检查散热和环境温度","regex": true, "severity": "critical", "context_lines": 2, "context_direction": "down", "search_direction": "up"},
@@ -316,7 +316,7 @@
           {"term": "XFS.*Log I/O Error Detected.*Shutting down filesystem", "result": "XFS 日志 I/O 错误，文件系统已强制关闭", "regex": true, "severity": "critical", "context_lines": 2},
           {"term": "Linux version", "result": "记录到内核启动标记，可用于确认一次启动或重启", "regex": false, "severity": "info", "context_lines": 1},
           {"term": "EXT4-fs.*recovery complete", "result": "EXT4 文件系统启动时完成日志恢复，支持上次未正常卸载", "regex": true, "severity": "warning", "context_lines": 1},
-          {"term": "EXT4-fs.*orphan inode(?:s)? deleted", "result": "EXT4 清理未正常关闭遗留的 orphan inode，支持上次异常中断", "regex": true, "severity": "warning", "context_lines": 1},
+          {"term": "EXT4-fs.*(?:orphan inode(?:s)? deleted|orphan cleanup on readonly fs)", "result": "EXT4 清理未正常关闭遗留数据，支持上次异常中断", "regex": true, "severity": "warning", "context_lines": 1},
           {"term": "Kernel panic", "result": "发现内核崩溃证据，需优先检查内核、驱动和硬件", "regex": false, "severity": "critical", "context_lines": 20},
           {"term": "(?:Out of memory|oom-kill)", "result": "发现内存耗尽证据，需检查高占用进程或虚拟机", "regex": true, "severity": "critical", "context_lines": 2},
           {"term": "thermal.*shutdown", "result": "发现过温关机证据，需检查散热和环境温度", "regex": true, "severity": "critical", "context_lines": 2},

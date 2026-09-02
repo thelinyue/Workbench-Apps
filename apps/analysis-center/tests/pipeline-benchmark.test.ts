@@ -129,6 +129,39 @@ describe('Pipeline 真实包性能基准', () => {
     right.evidence[0]!.rawMessage = 'changed evidence';
     expect(normalizeAnalysisResult(left)).not.toEqual(normalizeAnalysisResult(right));
   });
+
+  it('安全性能报告保留受支持的 power 诊断 ID', () => {
+    const runs = [0, 1, 2, 3, 4].map((runIndex): PipelineBenchmarkRun => {
+      const profiler = new PipelineProfiler();
+      const fileKey = `C:/private/ups-${runIndex}.log`;
+      profiler.recordFile(fileKey, 'ups', { bytesRead: 100, decodedBytes: 100, readDurationMs: 1 });
+      profiler.addFileMetrics(fileKey, { linesProcessed: 1, parserDurationMs: 1, ruleDurationMs: 1, eventsCreated: 1, evidenceRetained: 1 });
+      profiler.recordRule('power.ups.status.on_battery', 1, true, 1);
+      return {
+        totalDurationMs: 10 + runIndex,
+        profile: profiler.snapshot(),
+        result: {
+        ...analysisResult({ id: `analysis-${runIndex}`, startTime: '2026-09-02T00:00:00.000Z', completeTime: '2026-09-02T00:00:01.000Z', duration: 1000 }),
+        diagnoses: [{
+          id: 'power.ups_power_loss_suspected', category: 'power', severity: 'warning', confidence: 'high',
+          title: 'UPS 低电量后供电中断', summary: '安全摘要', affectedResources: [], findingIds: [], recommendationIds: []
+        }],
+        recommendations: [{ id: 'recommendation.ups:system', priority: 1, type: 'inspection', title: '检查 UPS', reason: '确认续航。', risk: 'safe' }]
+      }};
+    });
+
+    const report = buildPipelinePerformanceReport(runs, {
+      archiveSizeBytes: 1024,
+      totalRunCount: 6,
+      uniqueExtractDirectoryCount: 6,
+      uniqueDatabaseCount: 6
+    });
+
+    expect(report.diagnostics.diagnosisIds).toEqual(['power.ups_power_loss_suspected']);
+    expect(report.topFiles[0]?.alias).toBe('ups-01');
+    expect(report.topRules[0]?.ruleId).toBe('power.ups.status.on_battery');
+    expect(report.diagnostics.recommendations).toEqual([{ id: 'recommendation.ups', type: 'inspection', risk: 'safe' }]);
+  });
 });
 
 function analysisResult(runtime: { id: string; startTime: string; completeTime: string; duration: number }): AnalysisResult {

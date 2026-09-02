@@ -33,12 +33,12 @@ export interface AnalysisResult { schemaVersion: 1; id: string; status: 'complet
 
 interface DeviceIdentity { resource: string; label?: string; model?: string; serial?: string; slot?: string; usedFor?: string; }
 interface RaidAssessment { resource: string; level?: string; expectedMembers?: number; activeMembers?: number; missingMemberIndexes?: number[]; degraded: boolean; }
-interface RecommendationRequest { kind: 'smart' | 'raid'; resource: string; }
+interface RecommendationRequest { kind: 'smart' | 'raid' | 'ups'; resource: string; }
 
-const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume'])), regex: z.string(), type: z.string() })) });
+const rulePackSchema = z.object({ schemaVersion: z.literal(1), version: z.string(), eventRules: z.array(z.object({ id: z.string(), sources: z.array(z.enum(['kernel', 'sysinfo', 'mdstat', 'ugvolume', 'ups'])), regex: z.string(), type: z.string() })) });
 const rulePack = rulePackSchema.parse(rulePackJson);
 type CompiledEventRule = (typeof rulePack.eventRules)[number] & { pattern: RegExp };
-const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume'] as V1InputSourceType[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1InputSourceType, CompiledEventRule[]>;
+const rulesBySource = Object.fromEntries((['kernel', 'sysinfo', 'mdstat', 'ugvolume', 'ups'] as V1InputSourceType[]).map((source) => [source, rulePack.eventRules.filter((rule) => rule.sources.includes(source)).map((rule) => ({ ...rule, pattern: new RegExp(rule.regex, 'i') }))])) as Record<V1InputSourceType, CompiledEventRule[]>;
 // 内核来源的大多数行是无异常心跳；该集合覆盖当前所有 kernel 规则的触发词，预筛选命中后仍由原规则决定诊断结果。
 const kernelEventCandidate = /\b(?:error|timeout|timed out|reset controller|device not ready|hard resetting|failed|failure|link(?: is)? down|not recognized|not found|medium|uncorrectable|panic|out of memory|oom-kill|killed process|watchdog|uncleanly|orphan inode|recovery complete|corrupt\w*|read-?only|blocked for more than|bch_data_insert_keys)\b/i;
 
@@ -336,9 +336,13 @@ function parseTopology(line: string, topology: Map<string, string[]>): void {
   topology.set(pool, [...new Set([...(topology.get(pool) ?? []), mount[3]])]);
 }
 function poolFromMountLine(line: string): string | undefined { const match = line.match(/pool(\d+)-/i); return match ? `pool${match[1]}` : undefined; }
-function aggregateFindings(events: NormalizedEvent[], evidence: Evidence[], topology: Map<string, string[]>): Finding[] { const groups = new Map<string, NormalizedEvent[]>(); for (const event of events) { const key = `${event.type}:${event.resource ?? 'system'}`; groups.set(key, [...(groups.get(key) ?? []), event]); } return [...groups.entries()].map(([key, grouped]) => { const event = grouped[0]; const resource = event.resource; const extra = resource ? topology.get(resource) ?? [] : []; const title = titleFor(event.type, resource); const summary = event.type === 'storage.media_error' ? `${title}，共 ${grouped.length} 条日志证据。` : `${title}，共 ${grouped.length} 次。`; return { id: key, type: event.type, category: event.type.split('.')[0], severity: severityFor(event.type), confidence: event.type.startsWith('raid.') || ['storage.media_error', 'storage.device_unavailable', 'filesystem.read_only'].includes(event.type) ? 'confirmed' : event.type === 'storage.smart_risk' ? 'high' : 'medium', title, summary, affectedResources: [...new Set([...(resource ? [resource] : []), ...extra])], evidenceIds: grouped.map((item) => item.evidenceId), firstSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort()[0], lastSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort().at(-1), occurrenceCount: grouped.length }; }); }
-function titleFor(type: string, resource?: string): string { const names: Record<string, string> = { 'storage.io_error': '检测到块设备 I/O 错误', 'storage.device_unavailable': '检测到块设备已不可访问', 'storage.sata_link_down': '检测到 SATA 链路未连接', 'storage.media_error': '检测到不可恢复介质错误', 'storage.smart_risk': '检测到 SMART 介质风险指标', 'storage.device_count_mismatch': '检测到 SATA 槽位与块设备数量不一致', 'storage.nvme_timeout': '检测到 NVMe 请求超时并被中止', 'storage.io_hung': '检测到存储任务长时间阻塞', 'storage.bcache_stall': '检测到 bcache 写入路径阻塞线索', 'raid.member_failed': 'RAID 成员已失败', 'raid.degraded': 'RAID 阵列已降级', 'filesystem.error': '检测到文件系统错误', 'filesystem.read_only': '检测到文件系统被强制切换为只读', 'system.unclean_shutdown': '检测到异常关机线索', 'system.shutdown_sync_timeout': '检测到关机同步存储数据超时', 'system.kernel_panic': '检测到 Kernel Panic', 'system.oom': '检测到内存耗尽', 'system.oom_killer': '检测到 OOM Killer', 'system.watchdog': '检测到 Watchdog 锁死' }; return `${resource ? `${resource} ` : ''}${names[type] ?? type}`; }
-function severityFor(type: string): Severity { return type.startsWith('raid.') || type === 'system.kernel_panic' || type === 'system.watchdog' ? 'critical' : type.startsWith('storage.') || type.startsWith('filesystem.') || type.startsWith('system.') ? 'warning' : 'info'; }
+function aggregateFindings(events: NormalizedEvent[], evidence: Evidence[], topology: Map<string, string[]>): Finding[] { const groups = new Map<string, NormalizedEvent[]>(); for (const event of events) { const key = `${event.type}:${event.resource ?? 'system'}`; groups.set(key, [...(groups.get(key) ?? []), event]); } return [...groups.entries()].map(([key, grouped]) => { const event = grouped[0]; const resource = event.resource; const extra = resource ? topology.get(resource) ?? [] : []; const title = titleFor(event.type, resource); const summary = event.type === 'storage.media_error' ? `${title}，共 ${grouped.length} 条日志证据。` : `${title}，共 ${grouped.length} 次。`; return { id: key, type: event.type, category: event.type.split('.')[0], severity: severityFor(event.type), confidence: event.type.startsWith('raid.') || event.type.startsWith('power.') || ['storage.media_error', 'storage.device_unavailable', 'filesystem.read_only'].includes(event.type) ? 'confirmed' : event.type === 'storage.smart_risk' ? 'high' : 'medium', title, summary, affectedResources: [...new Set([...(resource ? [resource] : []), ...extra])], evidenceIds: grouped.map((item) => item.evidenceId), firstSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort()[0], lastSeen: grouped.map((item) => item.timestamp).filter(Boolean).sort().at(-1), occurrenceCount: grouped.length }; }); }
+function titleFor(type: string, resource?: string): string { const names: Record<string, string> = { 'storage.io_error': '检测到块设备 I/O 错误', 'storage.device_unavailable': '检测到块设备已不可访问', 'storage.sata_link_down': '检测到 SATA 链路未连接', 'storage.media_error': '检测到不可恢复介质错误', 'storage.smart_risk': '检测到 SMART 介质风险指标', 'storage.device_count_mismatch': '检测到 SATA 槽位与块设备数量不一致', 'storage.nvme_timeout': '检测到 NVMe 请求超时并被中止', 'storage.io_hung': '检测到存储任务长时间阻塞', 'storage.bcache_stall': '检测到 bcache 写入路径阻塞线索', 'raid.member_failed': 'RAID 成员已失败', 'raid.degraded': 'RAID 阵列已降级', 'filesystem.error': '检测到文件系统错误', 'filesystem.read_only': '检测到文件系统被强制切换为只读', 'system.unclean_shutdown': '检测到异常关机线索', 'system.shutdown_sync_timeout': '检测到关机同步存储数据超时', 'system.kernel_panic': '检测到 Kernel Panic', 'system.oom': '检测到内存耗尽', 'system.oom_killer': '检测到 OOM Killer', 'system.watchdog': '检测到 Watchdog 锁死', 'power.ups_on_battery': 'UPS 已切换至电池供电', 'power.ups_standby_scheduled': 'UPS 保护待机定时已设置', 'power.ups_low_battery': 'UPS 在电池供电期间进入低电量状态', 'power.ups_already_standby': '设备已进入 UPS 保护待机', 'power.ups_online': 'UPS 已恢复在线供电', 'power.ups_service_started': 'UPS 管理服务已启动' }; return `${resource ? `${resource} ` : ''}${names[type] ?? type}`; }
+function severityFor(type: string): Severity {
+  if (type.startsWith('raid.') || type === 'system.kernel_panic' || type === 'system.watchdog') return 'critical';
+  if (['power.ups_standby_scheduled', 'power.ups_already_standby', 'power.ups_online', 'power.ups_service_started'].includes(type)) return 'info';
+  return type.startsWith('storage.') || type.startsWith('filesystem.') || type.startsWith('system.') || type.startsWith('power.') ? 'warning' : 'info';
+}
 function localizeDeviceLabel(label: string | undefined, resource: string): string { if (!label) return resource; const m2 = label.match(/^M\.2\s+Hard Drive\s+(\d+)$/i); if (m2) return `M.2 硬盘 ${m2[1]}`; const disk = label.match(/^Hard Drive\s+(\d+)$/i); return disk ? `硬盘 ${disk[1]}` : label; }
 function localizeUsage(usage: string | undefined): string { return usage?.replace(/^Storage Pool\s+(\d+)$/i, '存储池 $1') ?? '日志未提供'; }
 function dropoutAction(deviceName: string): string { return `请关机后重新拔插${deviceName}；如仍未识别，请更换其他硬盘槽位接入对比，以判断是硬盘故障还是槽位异常。`; }
@@ -391,6 +395,83 @@ function buildEngineerConclusion(devices: DeviceAssessment[], arrays: string[] =
   const topologyFacts = [arrays.length ? `关联 RAID ${arrays.join('、')}` : '', pools.length ? `关联存储池 ${pools.join('、')}` : ''].filter(Boolean).join('；');
   return `${deviceFacts.join('。')}${topologyFacts ? `。${topologyFacts}` : ''}。以上为日志记录的设备与事件事实，未据此推断未经证实的因果关系。`;
 }
+
+interface UpsOutageSequence {
+  onBattery: NormalizedEvent;
+  standbyScheduled?: NormalizedEvent;
+  lowBattery?: NormalizedEvent;
+  alreadyStandby?: NormalizedEvent;
+}
+
+/**
+ * UPS 日志会长期保留多个停电周期，命令名还可能与实际状态相反。这里只消费精确状态事件，
+ * 并用 OL 或 NUT 服务重启切断旧周期；文件系统恢复痕迹只用于佐证下一次启动异常，不能单独归因。
+ */
+function buildUpsPowerLossDiagnosis(findings: Finding[], events: NormalizedEvent[]): Diagnosis | undefined {
+  const relevantTypes = new Set([
+    'power.ups_on_battery',
+    'power.ups_standby_scheduled',
+    'power.ups_low_battery',
+    'power.ups_already_standby',
+    'power.ups_online',
+    'power.ups_service_started',
+    'system.unclean_shutdown'
+  ]);
+  const ordered = events
+    .map((event, index) => ({ event, index }))
+    .filter(({ event }) => Boolean(event.timestamp) && relevantTypes.has(event.type))
+    .sort((left, right) => Date.parse(left.event.timestamp!) - Date.parse(right.event.timestamp!) || left.index - right.index);
+  let outage: UpsOutageSequence | undefined;
+  let correlated: { outage: Required<UpsOutageSequence>; unclean: NormalizedEvent } | undefined;
+
+  for (const { event } of ordered) {
+    if (event.type === 'power.ups_on_battery') {
+      outage = { onBattery: event };
+      continue;
+    }
+    if (event.type === 'power.ups_online' || event.type === 'power.ups_service_started') {
+      outage = undefined;
+      continue;
+    }
+    if (!outage) continue;
+    if (event.type === 'power.ups_standby_scheduled') outage.standbyScheduled = event;
+    else if (event.type === 'power.ups_low_battery' && outage.standbyScheduled) outage.lowBattery = event;
+    else if (event.type === 'power.ups_already_standby' && outage.lowBattery) outage.alreadyStandby = event;
+    else if (event.type === 'system.unclean_shutdown' && outage.standbyScheduled && outage.lowBattery && outage.alreadyStandby) {
+      correlated = { outage: outage as Required<UpsOutageSequence>, unclean: event };
+    }
+  }
+  if (!correlated) return undefined;
+
+  const findingTypes = [
+    'power.ups_on_battery',
+    'power.ups_standby_scheduled',
+    'power.ups_low_battery',
+    'power.ups_already_standby',
+    'system.unclean_shutdown'
+  ];
+  const findingIds = findingTypes
+    .map((type) => findings.find((finding) => finding.type === type)?.id)
+    .filter((id): id is string => Boolean(id));
+  const startedAt = Date.parse(correlated.outage.onBattery.timestamp!);
+  const uncleanAt = Date.parse(correlated.unclean.timestamp!);
+
+  return {
+    id: 'power.ups_power_loss_suspected',
+    category: 'power',
+    severity: 'warning',
+    confidence: 'high',
+    title: 'UPS 低电量后供电中断',
+    summary: 'UPS 在电池供电期间按策略进入保护待机，随后报告低电量；下一次启动出现异常中断恢复痕迹，与 UPS 电量耗尽后的供电中断高度一致。',
+    affectedResources: [],
+    findingIds,
+    recommendationIds: ['recommendation.ups:system'],
+    userConclusion: '您好，经分析诊断日志，UPS 在停电期间切换至电池供电，系统按设置进入保护待机，随后 UPS 进入低电量状态。下一次启动日志同时出现上次未正常关闭的恢复痕迹。综合判断，本次异常关机与停电持续时间较长、UPS 电量耗尽后供电中断高度一致。建议检查 UPS 电池健康、实际带载续航、负载功率和低电量保护策略。',
+    engineerConclusion: 'UPS 事件依次记录电池供电、设置保护待机、低电量和已待机，且在恢复在线或 UPS 服务重启前出现异常启动恢复证据。该结论来自跨日志时间关联，不把文件系统恢复痕迹单独视为根因。',
+    correlationWindowMs: Math.max(0, uncleanAt - startedAt)
+  };
+}
+
 /**
  * 诊断层只提升已经由 Finding 证实的事实：SMART 快照本身可定位设备；多设备同时异常提高整体风险，
  * 但不会据此推断 RAID 或文件系统的因果关系。
@@ -539,13 +620,21 @@ function composeDiagnoses(findings: Finding[], events: NormalizedEvent[], topolo
     }
   }
   if (!diagnoses.length) { const raid = findings.find((finding) => finding.type === 'raid.degraded'); if (raid) diagnoses.push({ id: 'raid.array.degraded', category: 'raid', severity: 'critical', confidence: 'confirmed', title: `${raid.affectedResources[0] ?? 'RAID'} 已降级`, summary: '阵列状态异常，需要确认冗余与成员状态。', primaryResource: raid.affectedResources[0], affectedResources: raid.affectedResources, findingIds: [raid.id], recommendationIds: [] }); }
+  const upsDiagnosis = buildUpsPowerLossDiagnosis(findings, events);
+  if (upsDiagnosis) {
+    recommendationRequests.push({ kind: 'ups', resource: 'system' });
+    if (diagnoses.some((diagnosis) => diagnosis.severity === 'critical')) diagnoses.push(upsDiagnosis);
+    else diagnoses.unshift(upsDiagnosis);
+  }
   return { diagnoses, recommendationRequests }; }
 
 /** Recommendation 的文案物化与排序独立计时，诊断阶段只保留去重后的请求和稳定 ID。 */
 function composeRecommendations(requests: RecommendationRequest[]): Recommendation[] {
-  return requests.map((request): Recommendation => request.kind === 'smart'
-    ? { id: `recommendation.smart:${request.resource}`, priority: 1, type: 'inspection', title: `检查 ${request.resource} SMART`, reason: '确认磁盘介质错误及健康状态。', risk: 'safe' }
-    : { id: `recommendation.raid:${request.resource}`, priority: 2, type: 'verification', title: `确认 ${request.resource} 当前冗余状态`, reason: '确认阵列是否仍具有足够冗余。', risk: 'safe' })
+  return requests.map((request): Recommendation => {
+    if (request.kind === 'smart') return { id: `recommendation.smart:${request.resource}`, priority: 1, type: 'inspection', title: `检查 ${request.resource} SMART`, reason: '确认磁盘介质错误及健康状态。', risk: 'safe' };
+    if (request.kind === 'ups') return { id: 'recommendation.ups:system', priority: 1, type: 'inspection', title: '检查 UPS 电池与带载续航', reason: '确认 UPS 电池健康、实际负载、可用续航和低电量保护策略。', risk: 'safe' };
+    return { id: `recommendation.raid:${request.resource}`, priority: 2, type: 'verification', title: `确认 ${request.resource} 当前冗余状态`, reason: '确认阵列是否仍具有足够冗余。', risk: 'safe' };
+  })
     .sort((left, right) => left.priority - right.priority);
 }
 

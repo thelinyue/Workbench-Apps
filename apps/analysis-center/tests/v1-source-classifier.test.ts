@@ -6,6 +6,7 @@ describe('V1 日志来源识别', () => {
     ['sysinfo.json', 'sysinfo'],
     ['nested/mdstat.log', 'mdstat'],
     ['nested/ugvolume.log', 'ugvolume'],
+    ['nested/ups/ups_tool.log', 'ups'],
     ['journal-5days.log', 'kernel'],
     ['dmesg.log', 'kernel'],
     ['EC661JJ302308B59_20260830192714_syslog', 'kernel']

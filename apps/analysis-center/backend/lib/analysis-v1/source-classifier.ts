@@ -1,4 +1,4 @@
-export type V1SourceType = 'kernel' | 'sysinfo' | 'mdstat' | 'ugvolume' | 'format-rule';
+export type V1SourceType = 'kernel' | 'sysinfo' | 'mdstat' | 'ugvolume' | 'ups' | 'format-rule';
 export type V1InputSourceType = Exclude<V1SourceType, 'format-rule'>;
 
 /**
@@ -13,6 +13,7 @@ export function classifyV1Source(file: string): V1InputSourceType | undefined {
   if (name === 'sysinfo.json') return 'sysinfo';
   if (name === 'mdstat.log') return 'mdstat';
   if (name === 'ugvolume.log') return 'ugvolume';
+  if (name === 'ups_tool.log') return 'ups';
   if (/^(?:kern(?:\.log(?:\.\d+)?)?|syslog(?:\.\d+)?|journal[^/]*|dmesg[^/]*)$/.test(name)) return 'kernel';
   if (/^[^/]+_syslog(?:\.\d+)?$/.test(name)) return 'kernel';
   return undefined;
